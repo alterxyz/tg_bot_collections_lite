@@ -13,9 +13,7 @@ Try `/answer_it` at <https://t.me/tealmoon_ai_v1_alt_bot>
 
 Setup the environment keys by pasting "token_key.json" in the root directory.
 
-Or `
-
-```json
+Or `python3 env_setup.py init` to initialize the environment keys, and replace the values in the `token_key.json` file.
 
 Pick one of the handler(folder), delete the rest, rename the left one to `handler`.
 
