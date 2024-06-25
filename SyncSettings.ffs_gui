@@ -22,6 +22,7 @@
             <Item>\Recovery\</Item>
             <Item>*\thumbs.db</Item>
             <Item>\start.py</Item>
+            <Item>*\useful.py</Item>
         </Exclude>
         <SizeMin Unit="None">0</SizeMin>
         <SizeMax Unit="None">0</SizeMax>
@@ -29,7 +30,7 @@
     </Filter>
     <FolderPairs>
         <Pair>
-            <Left>G:\exC\文档\GitHub\TealMoon_AI\tg_bot_collections_lite\handlers</Left>
+            <Left>G:\exC\文档\GitHub\source\tg_bot_collections_lite\handlers</Left>
             <Right>G:\exC\文档\GitHub\source\tg_bot_collections\handlers</Right>
         </Pair>
     </FolderPairs>

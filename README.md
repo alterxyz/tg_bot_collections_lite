@@ -2,9 +2,20 @@
 
 tg_bot_collection <https://github.com/yihong0618/tg_bot_collections>
 
+Try others like gpt or gemini or cohere at <https://t.me/tealmoon_ai_v1_bot>
+
+Try `/answer_it` at <https://t.me/tealmoon_ai_v1_alt_bot>
+
 ## Usage
 
 `git clone https://github.com/alterxyz/tg_bot_collections_lite`
+`cd tg_bot_collections_lite`
+
+Setup the environment keys by pasting "token_key.json" in the root directory.
+
+Or `
+
+```json
 
 Pick one of the handler(folder), delete the rest, rename the left one to `handler`.
 

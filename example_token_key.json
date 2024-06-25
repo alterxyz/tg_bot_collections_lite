@@ -1,7 +1,7 @@
 {
-    "Google_Gemini_API_Key": "example",
-    "Openai_API_Key": "example",
-    "TELEGRA_PH_TOKEN": "example",
+    "GOOGLE_GEMINI_KEY": "example",
+    "OPENAI_API_KEY": "example",
+    "TELEGRA_PH_TOKEN0": "example",
     "COHERE_API_KEY": "example",
     "DIFY_API_KEY": "example",
     "LLAMA_API_KEY": "example",
