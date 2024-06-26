@@ -18,7 +18,7 @@ Or `python3 env_setup.py init` to initialize the environment keys, and replace t
 Pick one of the handler(folder), delete the rest, rename the left one to `handler`.
 
 ```shell
-sudo python3 env_setup.py # Optional
+sudo python3 env_setup.py load # Optional. This will load your environment keys from the token_key.json file.
 source /etc/environment
 python3 tg.py ${BOT_TOKEN}
 ```
