@@ -6,6 +6,7 @@ from expiringdict import ExpiringDict
 from os import environ
 import time
 import datetime
+import re
 
 from openai import OpenAI
 import google.generativeai as genai
@@ -24,6 +25,8 @@ import cohere
 
 COHERE_API_KEY = environ.get("COHERE_API_KEY")
 COHERE_MODEL = "command-r-plus"
+# if you want to use cohere for answer it, set it to True
+USE_CHHERE = True
 if COHERE_API_KEY:
     co = cohere.Client(api_key=COHERE_API_KEY)
 
@@ -72,7 +75,7 @@ CHATGPT_PRO_MODEL = "gpt-4o-2024-05-13"
 
 
 client = OpenAI(api_key=CHATGPT_API_KEY, base_url=CHATGPT_BASE_URL, timeout=300)
-qwen_client = Together(api_key=QWEN_API_KEY, timeout=300)
+# qwen_client = Together(api_key=QWEN_API_KEY, timeout=300)
 
 
 def md_handler(message: Message, bot: TeleBot):
@@ -195,13 +198,13 @@ def answer_it_handler(message: Message, bot: TeleBot):
     chat_id_list.append(reply_id.message_id)
 
     ##### Cohere #####
-    if COHERE_API_KEY:
+    if USE_CHHERE and COHERE_API_KEY:
         full, chat_id = cohere_answer(latest_message, bot, full, m)
         chat_id_list.append(chat_id)
     else:
         pass
 
-    ##### Answer #####
+    ##### Telegraph #####
     final_answer(latest_message, bot, full, chat_id_list)
 
 
@@ -213,15 +216,24 @@ def cohere_answer(latest_message: Message, bot: TeleBot, full, m):
     player_message = [{"role": "User", "message": m}]
 
     try:
+        current_time = datetime.datetime.now(datetime.timezone.utc)
+        preamble = (
+            f"You are Command R Plus, a large language model trained to have polite, helpful, inclusive conversations with people. People are looking for information that may need you to search online. Make an accurate and fast response. If there are no search results, then provide responses based on your general knowledge(It's fine if it's not accurate, it might still inspire the user."
+            f"The current UTC time is {current_time.strftime('%Y-%m-%d %H:%M:%S')}, "
+            f"UTC-4 (e.g. New York) is {current_time.astimezone(datetime.timezone(datetime.timedelta(hours=-4))).strftime('%Y-%m-%d %H:%M:%S')}, "
+            f"UTC-7 (e.g. Los Angeles) is {current_time.astimezone(datetime.timezone(datetime.timedelta(hours=-7))).strftime('%Y-%m-%d %H:%M:%S')}, "
+            f"and UTC+8 (e.g. Beijing) is {current_time.astimezone(datetime.timezone(datetime.timedelta(hours=8))).strftime('%Y-%m-%d %H:%M:%S')}."
+        )
+
         stream = co.chat_stream(
             model=COHERE_MODEL,
             message=m,
-            temperature=0.3,
+            temperature=0.8,
             chat_history=player_message,
             prompt_truncation="AUTO",
             connectors=[{"id": "web-search"}],
             citation_quality="accurate",
-            preamble=f"You are Command R+, a large language model trained to have polite, helpful, inclusive conversations with people. The current time in Tornoto is {datetime.datetime.now(datetime.timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S')}, in Los Angeles is {datetime.datetime.now(datetime.timezone.utc).astimezone().astimezone(datetime.timezone(datetime.timedelta(hours=-7))).strftime('%Y-%m-%d %H:%M:%S')}, and in China is {datetime.datetime.now(datetime.timezone.utc).astimezone(datetime.timezone(datetime.timedelta(hours=8))).strftime('%Y-%m-%d %H:%M:%S')}.",
+            preamble=preamble,
         )
 
         s = ""
@@ -237,13 +249,13 @@ def cohere_answer(latest_message: Message, bot: TeleBot, full, m):
                 for doc in event.documents:
                     source += f"\n{doc['title']}\n{doc['url']}\n"
             elif event.event_type == "text-generation":
-                s += event.text.encode("utf-8").decode("utf-8")
+                s += event.text.encode("utf-8").decode("utf-8", "ignore")
                 if time.time() - start > 0.4:
                     start = time.time()
                     bot_reply_markdown(
                         reply_id,
                         who,
-                        f"\nStill thinking{len(s)}...",
+                        f"\nStill thinking{len(s)}...\n{s}",
                         bot,
                         split_text=True,
                     )
@@ -253,7 +265,7 @@ def cohere_answer(latest_message: Message, bot: TeleBot, full, m):
             s
             + "\n------\n------\n"
             + source
-            + f"\n------\n------\nLast Update{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            + f"\nLast Update{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} at UTC+8\n"
         )
 
         try:
@@ -269,15 +281,15 @@ def cohere_answer(latest_message: Message, bot: TeleBot, full, m):
     return full, reply_id.message_id
 
 
-def final_answer(latest_message: Message, bot: TeleBot, full, list):
+def final_answer(latest_message: Message, bot: TeleBot, full, answers_list):
     """final answer"""
     who = "Answer"
     reply_id = bot_reply_first(latest_message, who, bot)
     ph_s = ph.create_page_md(title="Answer it", markdown_text=full)
     bot_reply_markdown(reply_id, who, f"[View]({ph_s})", bot)
     # delete the chat message, only leave a telegra.ph link
-    # for i in list:
-    #     bot.delete_message(latest_message.chat.id, i)
+    for i in answers_list:
+        bot.delete_message(latest_message.chat.id, i)
 
 
 if GOOGLE_GEMINI_KEY and CHATGPT_API_KEY:
