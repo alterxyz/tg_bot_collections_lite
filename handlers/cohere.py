@@ -116,13 +116,22 @@ def cohere_handler(message: Message, bot: TeleBot) -> None:
                 if time.time() - start > 1.4:
                     start = time.time()
                     s = clean_text(s)
-                    bot_reply_markdown(
-                        reply_id,
-                        who,
-                        f"\nStill thinking{len(s)}...\n{s}",
-                        bot,
-                        split_text=True,
-                    )
+                    if len(s) > 3900:
+                        bot_reply_markdown(
+                            reply_id,
+                            who,
+                            f"\nStill thinking{len(s)}...\n",
+                            bot,
+                            split_text=True,
+                        )
+                    else:
+                        bot_reply_markdown(
+                            reply_id,
+                            who,
+                            f"\nStill thinking{len(s)}...\n{s}",
+                            bot,
+                            split_text=True,
+                        )
             elif event.event_type == "stream-end":
                 break
         content = (

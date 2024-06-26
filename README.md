@@ -35,13 +35,14 @@ pip install telebot
 pip install telegramify-markdown
 pip install expiringdict
 pip install google-generativeai
-pip install --upgrade together
+pip install together
 pip install urlextract
 pip install groq
 pip install dify-client
 pip install Markdown
 pip install beautifulsoup4
 pip install black
+pip install cohere
 ```
 
 ## About Sync
