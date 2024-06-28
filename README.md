@@ -102,7 +102,7 @@ Or manually compare and edit the files.
 ### Different file from non lite
 
 - README.md
-- requirements.txt
+- __init__.py # Skipped same text to avoid Error message, since we are edit message frequently.
 
 ### Same
 

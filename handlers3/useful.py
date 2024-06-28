@@ -332,7 +332,7 @@ def final_answer(latest_message: Message, bot: TeleBot, full, answers_list):
     who = "Answer it"
     reply_id = bot_reply_first(latest_message, who, bot)
     ph_s = ph.create_page_md(title="Answer it", markdown_text=full)
-    bot_reply_markdown(reply_id, who, f"[View]({ph_s})", bot)
+    bot_reply_markdown(reply_id, who, f"**[Full Answer]({ph_s})**", bot)
     # delete the chat message, only leave a telegra.ph link
     for i in answers_list:
         bot.delete_message(latest_message.chat.id, i)
@@ -340,8 +340,10 @@ def final_answer(latest_message: Message, bot: TeleBot, full, answers_list):
     #### Summary ####
     if SUMMARY == None:
         pass
-    if COHERE_USE and COHERE_API_KEY and SUMMARY == "cohere":
+    elif COHERE_USE and COHERE_API_KEY and SUMMARY == "cohere":
         summary_cohere(bot, full, ph_s, reply_id)
+    else:
+        pass
 
 
 def summary_cohere(bot: TeleBot, full_answer: str, ph_s: str, reply_id: int) -> None:
@@ -350,12 +352,12 @@ def summary_cohere(bot: TeleBot, full_answer: str, ph_s: str, reply_id: int) -> 
 
     # inherit
     if Language == "zh-cn":
-        s = f"[全文]({ph_s}) | "
+        s = f"**[全文]({ph_s})** | "
     elif Language == "en":
-        s = f"[Full Answer]({ph_s}) | "
+        s = f"**[Full Answer]({ph_s})** | "
 
     # filter
-    length = len(full_answer)  # max 128,000t tokens...
+    length = len(full_answer)  # max 128,000 tokens...
     if length > 50000:
         full_answer = full_answer[:50000]
 
@@ -409,7 +411,9 @@ Start with "Summary:" or "总结:"
 if GOOGLE_GEMINI_KEY and CHATGPT_API_KEY:
 
     def register(bot: TeleBot) -> None:
+        bot.register_message_handler(md_handler, commands=["md"], pass_bot=True)
         bot.register_message_handler(
             answer_it_handler, commands=["answer_it"], pass_bot=True
         )
+        bot.register_message_handler(md_handler, regexp="^md:", pass_bot=True)
         bot.register_message_handler(latest_handle_messages, pass_bot=True)
