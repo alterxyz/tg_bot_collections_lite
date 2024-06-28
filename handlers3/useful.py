@@ -79,17 +79,12 @@ if GEMINI_USE and GOOGLE_GEMINI_KEY:
         model_name="models/gemini-1.5-flash-latest",
         generation_config=generation_config,
         safety_settings=safety_settings,
-        system_instruction="""
-You are a large language model trained to have polite, helpful, inclusive conversations with people. The user asked a question, and multiple AI have given answers to the same question, answers are similar, but they have different styles. In some really rare cases, they may say the opposite, but this is understandable and can be ignored.
+        system_instruction=f"""
+The user asked a question, and multiple AI have given answers to the same question.
 Your task is to summarize the responses from them in a concise and clear manner.
-
-## The summary should:
-Be written in bullet points.
-Contain between two to ten sentences.
-Highlight key points and main conclusions.
-Note any significant differences in responses.
-Provide a brief indication if users should refer to the full responses for more details.
-For the first LLM's content, if it is mostly in any language other than English, respond in that language for all your output.
+The summary should:
+In one to two short sentences, as less as possible, and should not exceed 150 characters.
+Your must use language of {Language} to respond.
 Start with "Summary:" or "总结:"
 """,
     )
@@ -98,7 +93,7 @@ Start with "Summary:" or "总结:"
 
 
 #### Cohere init ####
-COHERE_USE = False
+COHERE_USE = True
 COHERE_API_KEY = environ.get("COHERE_API_KEY")
 
 if COHERE_USE and COHERE_API_KEY:
@@ -328,7 +323,7 @@ def cohere_answer(latest_message: Message, bot: TeleBot, full_answer, m):
                 break
         content = (
             s
-            + "\n---\n"
+            + "\n---\n---\n"
             + source
             + f"\nLast Update{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} at UTC+8\n"
         )
@@ -363,6 +358,8 @@ def final_answer(latest_message: Message, bot: TeleBot, full, answers_list):
         pass
     elif COHERE_USE and COHERE_API_KEY and SUMMARY == "cohere":
         summary_cohere(bot, full, ph_s, reply_id)
+    elif GEMINI_USE and GOOGLE_GEMINI_KEY and SUMMARY == "gemini":
+        summary_gemini(bot, full, ph_s, reply_id)
     else:
         pass
 
