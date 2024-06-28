@@ -27,7 +27,7 @@ python3 tg.py ${BOT_TOKEN}
 
 If you need to check the env setup, `cd` to this directory and run `env_setup.py` manually.
 
-## Manual pip install
+## Manual pip install (`--upgrade` for risk takers like me)
 
 ```shell
 pip install openai

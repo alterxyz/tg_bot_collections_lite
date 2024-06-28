@@ -6,28 +6,23 @@ from expiringdict import ExpiringDict
 from os import environ
 import time
 import datetime
-import re
 
 from openai import OpenAI
 import google.generativeai as genai
 from google.generativeai import ChatSession
 from google.generativeai.types.generation_types import StopCandidateException
-from telebot import TeleBot
-from together import Together
-from telebot.types import Message
 
 from . import *
 
 from telegramify_markdown.customize import markdown_symbol
 
 #### Cohere init ####
-import cohere
-
+USE_COHERE = True  # if you want to use cohere for answer it, set it to True
 COHERE_API_KEY = environ.get("COHERE_API_KEY")
-COHERE_MODEL = "command-r-plus"
-# if you want to use cohere for answer it, set it to True
-USE_CHHERE = True
-if COHERE_API_KEY:
+if COHERE_API_KEY and USE_COHERE:
+    import cohere
+
+    COHERE_MODEL = "command-r-plus"
     co = cohere.Client(api_key=COHERE_API_KEY)
 
 #### Telegraph init ####
@@ -38,7 +33,8 @@ ph = TelegraphAPI(TELEGRA_PH_TOKEN)
 chat_message_dict = ExpiringDict(max_len=100, max_age_seconds=120)
 chat_user_dict = ExpiringDict(max_len=100, max_age_seconds=20)
 
-markdown_symbol.head_level_1 = "📌"  # If you want, Customizing the head level 1 symbol
+# If you want, Customizing the head level 1 symbol
+markdown_symbol.head_level_1 = "📌"
 markdown_symbol.link = "🔗"  # If you want, Customizing the link symbol
 
 GOOGLE_GEMINI_KEY = environ.get("GOOGLE_GEMINI_KEY")
@@ -69,13 +65,8 @@ convo = model.start_chat()
 #### ChatGPT init ####
 CHATGPT_API_KEY = environ.get("OPENAI_API_KEY")
 CHATGPT_BASE_URL = environ.get("OPENAI_API_BASE") or "https://api.openai.com/v1"
-QWEN_API_KEY = environ.get("TOGETHER_API_KEY")
-QWEN_MODEL = "Qwen/Qwen2-72B-Instruct"
 CHATGPT_PRO_MODEL = "gpt-4o-2024-05-13"
-
-
 client = OpenAI(api_key=CHATGPT_API_KEY, base_url=CHATGPT_BASE_URL, timeout=300)
-# qwen_client = Together(api_key=QWEN_API_KEY, timeout=300)
 
 
 def md_handler(message: Message, bot: TeleBot):
@@ -198,7 +189,7 @@ def answer_it_handler(message: Message, bot: TeleBot):
     chat_id_list.append(reply_id.message_id)
 
     ##### Cohere #####
-    if USE_CHHERE and COHERE_API_KEY:
+    if USE_COHERE and COHERE_API_KEY:
         full, chat_id = cohere_answer(latest_message, bot, full, m)
         chat_id_list.append(chat_id)
     else:
@@ -260,6 +251,7 @@ def cohere_answer(latest_message: Message, bot: TeleBot, full, m):
                         split_text=True,
                     )
             elif event.event_type == "stream-end":
+                s += event.text.encode("utf-8").decode("utf-8", "ignore")
                 break
         content = (
             s
