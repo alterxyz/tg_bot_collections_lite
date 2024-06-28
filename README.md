@@ -19,6 +19,8 @@ source /etc/environment # Optional: Reload the environment keys
 python3 tg.py ${TELEGRAM_BOT_TOKEN}
 ```
 
+---
+
 ### Setup
 
 #### Init the repo
