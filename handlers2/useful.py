@@ -287,9 +287,7 @@ def final_answer(latest_message: Message, bot: TeleBot, full, answers_list):
 if GOOGLE_GEMINI_KEY and CHATGPT_API_KEY:
 
     def register(bot: TeleBot) -> None:
-        bot.register_message_handler(md_handler, commands=["md"], pass_bot=True)
         bot.register_message_handler(
             answer_it_handler, commands=["answer_it"], pass_bot=True
         )
-        bot.register_message_handler(md_handler, regexp="^md:", pass_bot=True)
         bot.register_message_handler(latest_handle_messages, pass_bot=True)
