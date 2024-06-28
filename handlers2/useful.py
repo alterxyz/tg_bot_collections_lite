@@ -251,7 +251,6 @@ def cohere_answer(latest_message: Message, bot: TeleBot, full, m):
                         split_text=True,
                     )
             elif event.event_type == "stream-end":
-                s += event.text.encode("utf-8").decode("utf-8", "ignore")
                 break
         content = (
             s

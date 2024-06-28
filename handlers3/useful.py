@@ -164,7 +164,7 @@ def answer_it_handler(message: Message, bot: TeleBot):
             full_answer, chat_id = gemini_answer(latest_message, bot, full_answer, m)
             full_chat_id_list.append(chat_id)
         except Exception as e:
-            print(f"Answer_it Error\n------\nGemini:\n{e}\n------\n")
+            print(f"\n------\ngemini_answer error:\n{e}\n------\n")
             pass
 
     ##### ChatGPT #####
@@ -173,7 +173,7 @@ def answer_it_handler(message: Message, bot: TeleBot):
             full_answer, chat_id = chatgpt_answer(latest_message, bot, full_answer, m)
             full_chat_id_list.append(chat_id)
         except Exception as e:
-            print(f"Answer_it Error\n------\nChatGPT:\n{e}\n------\n")
+            print(f"\n------\nchatgpt_answer error:\n{e}\n------\n")
             pass
 
     ##### Cohere #####
@@ -182,18 +182,16 @@ def answer_it_handler(message: Message, bot: TeleBot):
             full_answer, chat_id = cohere_answer(latest_message, bot, full_answer, m)
             full_chat_id_list.append(chat_id)
         except Exception as e:
-            print(f"Answer_it Error\n------\nCohere:\n{e}\n------\n")
+            print(f"\n------\ncohere_answer error:\n{e}\n------\n")
             pass
-        full, chat_id = cohere_answer(latest_message, bot, full_answer, m)
-        full_chat_id_list.append(chat_id)
     else:
         pass
 
     ##### Telegraph #####
-    final_answer(latest_message, bot, full, full_chat_id_list)
+    final_answer(latest_message, bot, full_answer, full_chat_id_list)
 
 
-def gemini_answer(latest_message: Message, bot: TeleBot, full, m):
+def gemini_answer(latest_message: Message, bot: TeleBot, full_answer, m):
     """gemini answer"""
     who = "Gemini Pro"
     # show something, make it more responsible
@@ -211,15 +209,15 @@ def gemini_answer(latest_message: Message, bot: TeleBot, full, m):
         bot_reply_markdown(reply_id, who, s, bot)
         convo.history.clear()
     except Exception as e:
-        print(f"Answer_it Inner function Error\n------\n{who}:\n{e}\n------\n")
+        print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
         convo.history.clear()
         bot_reply_markdown(reply_id, who, "Error", bot)
 
-    full += f"{who}:\n{s}"
-    return full, reply_id.message_id
+    full_answer += f"{who}:\n{s}"
+    return full_answer, reply_id.message_id
 
 
-def chatgpt_answer(latest_message: Message, bot: TeleBot, full, m):
+def chatgpt_answer(latest_message: Message, bot: TeleBot, full_answer, m):
     """chatgpt answer"""
     who = "ChatGPT Pro"
     reply_id = bot_reply_first(latest_message, who, bot)
@@ -249,14 +247,14 @@ def chatgpt_answer(latest_message: Message, bot: TeleBot, full, m):
             pass
 
     except Exception as e:
-        print(f"Answer_it Inner function Error\n------\n{who}:\n{e}\n------\n")
+        print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
         bot_reply_markdown(reply_id, who, "answer wrong", bot)
 
-    full += f"\n---\n{who}:\n{s}"
-    return full, reply_id.message_id
+    full_answer += f"\n---\n{who}:\n{s}"
+    return full_answer, reply_id.message_id
 
 
-def cohere_answer(latest_message: Message, bot: TeleBot, full, m):
+def cohere_answer(latest_message: Message, bot: TeleBot, full_answer, m):
     """cohere answer"""
     who = "Command R Plus"
     reply_id = bot_reply_first(latest_message, who, bot)
@@ -296,7 +294,7 @@ def cohere_answer(latest_message: Message, bot: TeleBot, full, m):
                     source += f"\n{doc['title']}\n{doc['url']}\n"
             elif event.event_type == "text-generation":
                 s += event.text.encode("utf-8").decode("utf-8", "ignore")
-                if time.time() - start > 1.5:
+                if time.time() - start > 0.8:
                     start = time.time()
                     bot_reply_markdown(
                         reply_id,
@@ -306,7 +304,6 @@ def cohere_answer(latest_message: Message, bot: TeleBot, full, m):
                         split_text=True,
                     )
             elif event.event_type == "stream-end":
-                s += event.text.encode("utf-8").decode("utf-8", "ignore")
                 break
         content = (
             s
@@ -320,11 +317,11 @@ def cohere_answer(latest_message: Message, bot: TeleBot, full, m):
         except:
             pass
     except Exception as e:
-        print(f"Answer_it Inner function Error\n------\n{who}:\n{e}\n------\n")
+        print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
         bot_reply_markdown(reply_id, who, "Answer wrong", bot)
-        return full, reply_id.message_id
-    full += f"\n---\n{who}:\n{content}"
-    return full, reply_id.message_id
+        return full_answer, reply_id.message_id
+    full_answer += f"\n---\n{who}:\n{content}"
+    return full_answer, reply_id.message_id
 
 
 # TODO: Perplexity looks good. `pplx_answer`
@@ -390,11 +387,10 @@ Start with "Summary:" or "总结:"
                 bot_reply_markdown(reply_id, who, f"{s}Summarizing...", bot)
             elif event.event_type == "text-generation":
                 s += event.text.encode("utf-8").decode("utf-8", "ignore")
-                if time.time() - start > 0.8:
+                if time.time() - start > 0.1:
                     start = time.time()
                     bot_reply_markdown(reply_id, who, s, bot)
             elif event.event_type == "stream-end":
-                s += event.text.encode("utf-8").decode("utf-8", "ignore")
                 break
 
         try:
@@ -407,8 +403,7 @@ Start with "Summary:" or "总结:"
             bot_reply_markdown(reply_id, who, f"[全文]({ph_s})", bot)
         elif Language == "en":
             bot_reply_markdown(reply_id, who, f"[Full Answer]({ph_s})", bot)
-        bot_reply_markdown(reply_id, who, s, bot)
-        print(f"Summary Cohere Error{e}\n------\n")
+        print(f"\n------\nsummary_cohere function inner Error:\n{e}\n------\n")
 
 
 if GOOGLE_GEMINI_KEY and CHATGPT_API_KEY:
