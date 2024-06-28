@@ -20,7 +20,9 @@ markdown_symbol.link = "🔗"  # If you want, Customizing the link symbol
 chat_message_dict = ExpiringDict(max_len=100, max_age_seconds=120)
 chat_user_dict = ExpiringDict(max_len=100, max_age_seconds=20)
 Language = "zh-cn"  # "en" or "zh-cn".
-SUMMARY = None  # see the summary_xyz for what available, or set to None to disable it.
+SUMMARY = (
+    "cohere"  # see the summary_xyz for what available, or set to None to disable it.
+)
 
 
 #### Telegra.ph init ####
