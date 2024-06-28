@@ -18,24 +18,26 @@ markdown_symbol.link = "🔗"  # If you want, Customizing the link symbol
 chat_message_dict = ExpiringDict(max_len=100, max_age_seconds=120)
 chat_user_dict = ExpiringDict(max_len=100, max_age_seconds=20)
 
-
-#### Customization ####
-Language = "zh-cn"  # "en" or "zh-cn".
-SUMMARY = "gemini"  # "cohere" or "gemini" or None
-Extra_clean = True  # Will Delete command message
-GEMINI_USE = True
-CHATGPT_USE = False
-COHERE_USE = True
-QWEN_USE = True
-CLADUE_USE = False
-LLAMA_USE = True
-
 #### Telegra.ph init ####
 # Will auto generate a token if not provided, restart will lose all TODO
 TELEGRA_PH_TOKEN = environ.get("TELEGRA_PH_TOKEN")
 # Edit "Store_Token = False" in "__init__.py" to True to store it
 ph = TelegraphAPI(TELEGRA_PH_TOKEN)
 
+
+#### Customization ####
+Language = "zh-cn"  # "en" or "zh-cn".
+SUMMARY = "gemini"  # "cohere" or "gemini" or None
+General_clean = True  # Will Delete LLM message
+Extra_clean = True  # Will Delete command message too
+
+#### LLMs ####
+GEMINI_USE = True
+CHATGPT_USE = True
+COHERE_USE = False # Slow, but web search
+QWEN_USE = True
+CLADUE_USE = False # Todo
+LLAMA_USE = True
 
 #### LLMs init ####
 #### OpenAI init ####
@@ -72,7 +74,7 @@ if GEMINI_USE and GOOGLE_GEMINI_KEY:
     ]
 
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash-latest",
+        model_name="gemini-1.5-pro-latest",
         generation_config=generation_config,
         safety_settings=safety_settings,
     )
@@ -84,9 +86,9 @@ if GEMINI_USE and GOOGLE_GEMINI_KEY:
 The user asked a question, and multiple AI have given answers to the same question.
 Your task is to summarize the responses from them in a concise and clear manner.
 The summary should:
-In one to two short sentences, as less as possible, and should not exceed 150 characters.
+In one to three short sentences, as less as possible.
 Your must use language of {Language} to respond.
-Start with "Summary:" or "总结:"
+Start with "Summary:" or"总结:"
 """,
     )
     convo = model.start_chat()
@@ -194,7 +196,7 @@ def answer_it_handler(message: Message, bot: TeleBot) -> None:
     latest_message = chat_message_dict.get(chat_id)
     m = latest_message.text.strip()
     m = enrich_text_with_urls(m)
-    full_answer = f"Question:\n{m}\n---\n"
+    full_answer = f"Question:\n{m}\n"
 
     #### Answers Thread ####
     executor = ThreadPoolExecutor(max_workers=5)
@@ -542,11 +544,13 @@ def final_answer(latest_message: Message, bot: TeleBot, full_answer: str, answer
     """final answer"""
     who = "Answer it"
     reply_id = bot_reply_first(latest_message, who, bot)
+    full_answer += f"\n---\nLast Update{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} at UTC+8\nYou had reached the end of the answer! 🎉" # Test for telegraph lenght
     ph_s = ph.create_page_md(title="Answer it", markdown_text=full_answer)
     bot_reply_markdown(reply_id, who, f"**[Full Answer]({ph_s})**", bot)
     # delete the chat message, only leave a telegra.ph link
-    for i in answers_list:
-        bot.delete_message(latest_message.chat.id, i)
+    if General_clean:
+        for i in answers_list:
+            bot.delete_message(latest_message.chat.id, i)
 
     #### Summary ####
     if SUMMARY == None:
