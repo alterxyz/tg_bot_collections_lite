@@ -5,5 +5,8 @@
     "COHERE_API_KEY": "example",
     "DIFY_API_KEY": "example",
     "LLAMA_API_KEY": "example",
-    "TOGETHER_API_KEY": "example"
+    "GROQ_API_KEY": "example",
+    "TOGETHER_API_KEY": "example",
+    "ANTHROPIC_BASE_URL": "example",
+    "ANTHROPIC_API_KEY": "example"
 }

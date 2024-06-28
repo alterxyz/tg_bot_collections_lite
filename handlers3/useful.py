@@ -6,26 +6,29 @@ from expiringdict import ExpiringDict
 from os import environ
 import time
 import datetime
-import re
+from concurrent.futures import ThreadPoolExecutor
 
 from . import *
 
-from telegramify_markdown import convert
 from telegramify_markdown.customize import markdown_symbol
 
-
-#### Customization ####
 # If you want, Customizing the head level 1 symbol
 markdown_symbol.head_level_1 = "📌"
 markdown_symbol.link = "🔗"  # If you want, Customizing the link symbol
 chat_message_dict = ExpiringDict(max_len=100, max_age_seconds=120)
 chat_user_dict = ExpiringDict(max_len=100, max_age_seconds=20)
-Language = "zh-cn"  # "en" or "zh-cn".
-SUMMARY = (
-    # see the summary_xyz for what available, or set to None to disable it.
-    "gemini"
-)
 
+
+#### Customization ####
+Language = "zh-cn"  # "en" or "zh-cn".
+SUMMARY = "gemini"  # "cohere" or "gemini" or None
+Extra_clean = True  # Will Delete command message
+GEMINI_USE = True
+CHATGPT_USE = False
+COHERE_USE = True
+QWEN_USE = True
+CLADUE_USE = False
+LLAMA_USE = True
 
 #### Telegra.ph init ####
 # Will auto generate a token if not provided, restart will lose all TODO
@@ -36,7 +39,6 @@ ph = TelegraphAPI(TELEGRA_PH_TOKEN)
 
 #### LLMs init ####
 #### OpenAI init ####
-CHATGPT_USE = True
 CHATGPT_API_KEY = environ.get("OPENAI_API_KEY")
 CHATGPT_BASE_URL = environ.get("OPENAI_API_BASE") or "https://api.openai.com/v1"
 if CHATGPT_USE and CHATGPT_API_KEY:
@@ -47,7 +49,6 @@ if CHATGPT_USE and CHATGPT_API_KEY:
 
 
 #### Gemini init ####
-GEMINI_USE = True
 GOOGLE_GEMINI_KEY = environ.get("GOOGLE_GEMINI_KEY")
 if GEMINI_USE and GOOGLE_GEMINI_KEY:
     import google.generativeai as genai
@@ -71,12 +72,12 @@ if GEMINI_USE and GOOGLE_GEMINI_KEY:
     ]
 
     model = genai.GenerativeModel(
-        model_name="models/gemini-1.5-pro-latest",
+        model_name="gemini-1.5-flash-latest",
         generation_config=generation_config,
         safety_settings=safety_settings,
     )
     model_flash = genai.GenerativeModel(
-        model_name="models/gemini-1.5-flash-latest",
+        model_name="gemini-1.5-flash-latest",
         generation_config=generation_config,
         safety_settings=safety_settings,
         system_instruction=f"""
@@ -93,7 +94,6 @@ Start with "Summary:" or "总结:"
 
 
 #### Cohere init ####
-COHERE_USE = True
 COHERE_API_KEY = environ.get("COHERE_API_KEY")
 
 if COHERE_USE and COHERE_API_KEY:
@@ -104,9 +104,32 @@ if COHERE_USE and COHERE_API_KEY:
 
 
 #### Qwen init ####
-QWEN_USE = False
 QWEN_API_KEY = environ.get("TOGETHER_API_KEY")
-QWEN_MODEL = "Qwen/Qwen2-72B-Instruct"
+
+if QWEN_USE and QWEN_API_KEY:
+    from together import Together
+
+    QWEN_MODEL = "Qwen/Qwen2-72B-Instruct"
+    qwen_client = Together(api_key=QWEN_API_KEY)
+
+#### Claude init ####
+ANTHROPIC_API_KEY = environ.get("ANTHROPIC_API_KEY")
+# use openai for claude
+if CLADUE_USE and ANTHROPIC_API_KEY:
+    ANTHROPIC_BASE_URL = environ.get("ANTHROPIC_BASE_URL")
+    ANTHROPIC_MODEL = "claude-3-5-sonnet-20240620"
+    claude_client = OpenAI(
+        api_key=ANTHROPIC_API_KEY, base_url=ANTHROPIC_BASE_URL, timeout=20
+    )
+
+#### llama init ####
+LLAMA_API_KEY = environ.get("GROQ_API_KEY")
+if LLAMA_USE and LLAMA_API_KEY:
+    from groq import Groq
+
+    llama_client = Groq(api_key=LLAMA_API_KEY)
+    LLAMA_MODEL = "llama3-8b-8192"
+
 
 #### init end ####
 
@@ -123,7 +146,7 @@ def latest_handle_messages(message: Message, bot: TeleBot):
     chat_id = message.chat.id
     chat_user_id = message.from_user.id
     # if is bot command, ignore
-    if message.text.startswith("/"):
+    if message.text and message.text.startswith("/"):
         return
     # start command ignore
     elif message.text.startswith(
@@ -161,7 +184,7 @@ def latest_handle_messages(message: Message, bot: TeleBot):
         print(chat_message_dict[chat_id].text)
 
 
-def answer_it_handler(message: Message, bot: TeleBot):
+def answer_it_handler(message: Message, bot: TeleBot) -> None:
     """answer_it: /answer_it"""
     # answer the last message in the chat group
     who = "answer_it"
@@ -171,43 +194,102 @@ def answer_it_handler(message: Message, bot: TeleBot):
     latest_message = chat_message_dict.get(chat_id)
     m = latest_message.text.strip()
     m = enrich_text_with_urls(m)
-    full_answer = ""
-    full_chat_id_list = []
+    full_answer = f"Question:\n{m}\n---\n"
 
-    ##### Gemini #####
+    #### Answers Thread ####
+    executor = ThreadPoolExecutor(max_workers=5)
     if GEMINI_USE and GOOGLE_GEMINI_KEY:
-        try:
-            full_answer, chat_id = gemini_answer(latest_message, bot, full_answer, m)
-            full_chat_id_list.append(chat_id)
-        except Exception as e:
-            print(f"\n------\ngemini_answer error:\n{e}\n------\n")
-            pass
-
-    ##### ChatGPT #####
+        gemini_future = executor.submit(gemini_answer, latest_message, bot, m)
     if CHATGPT_USE and CHATGPT_API_KEY:
-        try:
-            full_answer, chat_id = chatgpt_answer(latest_message, bot, full_answer, m)
-            full_chat_id_list.append(chat_id)
-        except Exception as e:
-            print(f"\n------\nchatgpt_answer error:\n{e}\n------\n")
-            pass
-
-    ##### Cohere #####
+        chatgpt_future = executor.submit(chatgpt_answer, latest_message, bot, m)
     if COHERE_USE and COHERE_API_KEY:
-        try:
-            full_answer, chat_id = cohere_answer(latest_message, bot, full_answer, m)
-            full_chat_id_list.append(chat_id)
-        except Exception as e:
-            print(f"\n------\ncohere_answer error:\n{e}\n------\n")
-            pass
-    else:
-        pass
+        cohere_future = executor.submit(cohere_answer, latest_message, bot, m)
+    if QWEN_USE and QWEN_API_KEY:
+        qwen_future = executor.submit(qwen_answer, latest_message, bot, m)
+    if CLADUE_USE and ANTHROPIC_API_KEY:
+        claude_future = executor.submit(claude_answer, latest_message, bot, m)
+    if LLAMA_USE and LLAMA_API_KEY:
+        llama_future = executor.submit(llama_answer, latest_message, bot, m)
+
+    #### Answers List ####
+    full_chat_id_list = []
+    if GEMINI_USE and GOOGLE_GEMINI_KEY:
+        answer_gemini, gemini_chat_id = gemini_future.result()
+        full_chat_id_list.append(gemini_chat_id)
+        full_answer += answer_gemini
+    if CHATGPT_USE and CHATGPT_API_KEY:
+        anaswer_chatgpt, chatgpt_chat_id = chatgpt_future.result()
+        full_chat_id_list.append(chatgpt_chat_id)
+        full_answer += anaswer_chatgpt
+    if COHERE_USE and COHERE_API_KEY:
+        answer_cohere, cohere_chat_id = cohere_future.result()
+        full_chat_id_list.append(cohere_chat_id)
+        full_answer += answer_cohere
+    if QWEN_USE and QWEN_API_KEY:
+        answer_qwen, qwen_chat_id = qwen_future.result()
+        full_chat_id_list.append(qwen_chat_id)
+        full_answer += answer_qwen
+    if CLADUE_USE and ANTHROPIC_API_KEY:
+        answer_claude, claude_chat_id = claude_future.result()
+        full_chat_id_list.append(claude_chat_id)
+        full_answer += answer_claude
+    if LLAMA_USE and LLAMA_API_KEY:
+        answer_llama, llama_chat_id = llama_future.result()
+        full_chat_id_list.append(llama_chat_id)
+        full_answer += answer_llama
+
+    print(full_chat_id_list)
 
     ##### Telegraph #####
     final_answer(latest_message, bot, full_answer, full_chat_id_list)
+    if Extra_clean:
+        bot.delete_message(chat_id, message.message_id)
 
 
-def gemini_answer(latest_message: Message, bot: TeleBot, full_answer, m):
+# def thread_answers(latest_message: Message, bot: TeleBot, m: str):
+#     #### answers function init ####
+#     USE = {
+#         "gemini_answer": GEMINI_USE and GOOGLE_GEMINI_KEY,
+#         "chatgpt_answer": CHATGPT_USE and CHATGPT_API_KEY,
+#         "cohere_answer": COHERE_USE and COHERE_API_KEY,
+#         "qwen_answer": QWEN_USE and QWEN_API_KEY,
+#         # More LLMs
+#     }
+
+
+#     results = []
+#     full_chat_id_list = []
+
+#     with ThreadPoolExecutor(max_workers=5) as executor:
+#         futures = {
+#             executor.submit(func, latest_message, bot, m): func
+#             for func, use in USE.items()
+#             if use
+#         }
+
+#         for future in as_completed(futures):
+#             try:
+#                 answer, message_id = future.result()
+#                 # Store the answer and message_id
+#                 results.append((message_id, answer))
+#                 full_chat_id_list.append(message_id)
+#             except Exception as e:
+#                 print(f"\n------\nthread_answers Error:\n{e}\n------\n")
+#                 continue
+
+#     # rank the results by message_id
+#     sorted_results = sorted(results)
+#     full_chat_id_list.sort()
+
+#     # final answer
+#     full_answer = f"Question:\n{m}\n---\n"
+#     for _, answer in sorted_results:
+#         full_answer += answer
+
+#     return full_answer, full_chat_id_list
+
+
+def gemini_answer(latest_message: Message, bot: TeleBot, m):
     """gemini answer"""
     who = "Gemini Pro"
     # show something, make it more responsible
@@ -228,12 +310,13 @@ def gemini_answer(latest_message: Message, bot: TeleBot, full_answer, m):
         print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
         convo.history.clear()
         bot_reply_markdown(reply_id, who, "Error", bot)
+        return f"\n---\n{who}:\nAnswer wrong", reply_id.message_id
 
-    full_answer += f"{who}:\n{s}"
-    return full_answer, reply_id.message_id
+    answer = f"\n---\n{who}:\n{s}"
+    return answer, reply_id.message_id
 
 
-def chatgpt_answer(latest_message: Message, bot: TeleBot, full_answer, m):
+def chatgpt_answer(latest_message: Message, bot: TeleBot, m):
     """chatgpt answer"""
     who = "ChatGPT Pro"
     reply_id = bot_reply_first(latest_message, who, bot)
@@ -265,12 +348,49 @@ def chatgpt_answer(latest_message: Message, bot: TeleBot, full_answer, m):
     except Exception as e:
         print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
         bot_reply_markdown(reply_id, who, "answer wrong", bot)
+        return f"\n---\n{who}:\nAnswer wrong", reply_id.message_id
 
-    full_answer += f"\n---\n{who}:\n{s}"
-    return full_answer, reply_id.message_id
+    answer = f"\n---\n{who}:\n{s}"
+    return answer, reply_id.message_id
 
 
-def cohere_answer(latest_message: Message, bot: TeleBot, full_answer, m):
+def claude_answer(latest_message: Message, bot: TeleBot, m):
+    """claude answer"""
+    who = "Claude Pro"
+    reply_id = bot_reply_first(latest_message, who, bot)
+
+    try:
+        r = claude_client.chat.completions.create(
+            messages=[{"role": "user", "content": m}],
+            max_tokens=4096,
+            model=ANTHROPIC_MODEL,
+            stream=True,
+        )
+        s = ""
+        start = time.time()
+        for chunk in r:
+            if chunk.choices[0].delta.content is None:
+                break
+            s += chunk.choices[0].delta.content
+            if time.time() - start > 1.5:
+                start = time.time()
+                bot_reply_markdown(reply_id, who, s, bot, split_text=False)
+        # maybe not complete
+        try:
+            bot_reply_markdown(reply_id, who, s, bot)
+        except:
+            pass
+
+    except Exception as e:
+        print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
+        bot_reply_markdown(reply_id, who, "answer wrong", bot)
+        return f"\n---\n{who}:\nAnswer wrong", reply_id.message_id
+
+    answer = f"\n---\n{who}:\n{s}"
+    return answer, reply_id.message_id
+
+
+def cohere_answer(latest_message: Message, bot: TeleBot, m):
     """cohere answer"""
     who = "Command R Plus"
     reply_id = bot_reply_first(latest_message, who, bot)
@@ -335,19 +455,94 @@ def cohere_answer(latest_message: Message, bot: TeleBot, full_answer, m):
     except Exception as e:
         print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
         bot_reply_markdown(reply_id, who, "Answer wrong", bot)
-        return full_answer, reply_id.message_id
-    full_answer += f"\n---\n{who}:\n{content}"
-    return full_answer, reply_id.message_id
+        return f"\n---\n{who}:\nAnswer wrong", reply_id.message_id
+    answer = f"\n---\n{who}:\n{content}"
+    return answer, reply_id.message_id
+
+
+def qwen_answer(latest_message: Message, bot: TeleBot, m):
+    """qwen answer"""
+    who = "qwen Pro"
+    reply_id = bot_reply_first(latest_message, who, bot)
+    try:
+        r = qwen_client.chat.completions.create(
+            messages=[{"role": "user", "content": m}],
+            max_tokens=8192,
+            model=QWEN_MODEL,
+            stream=True,
+        )
+        s = ""
+        start = time.time()
+        for chunk in r:
+            if chunk.choices[0].delta.content is None:
+                break
+            s += chunk.choices[0].delta.content
+            if time.time() - start > 1.5:
+                start = time.time()
+                bot_reply_markdown(reply_id, who, s, bot, split_text=False)
+        # maybe not complete
+        try:
+            bot_reply_markdown(reply_id, who, s, bot)
+        except:
+            pass
+
+    except Exception as e:
+        print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
+        bot_reply_markdown(reply_id, who, "answer wrong", bot)
+        return f"\n---\n{who}:\nAnswer wrong", reply_id.message_id
+
+    answer = f"\n---\n{who}:\n{s}"
+    return answer, reply_id.message_id
+
+
+def llama_answer(latest_message: Message, bot: TeleBot, m):
+    """llama answer"""
+    who = "llama"
+    reply_id = bot_reply_first(latest_message, who, bot)
+    try:
+        r = llama_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"{m}\nMotes: You must use language of {Language} to respond.",
+                }
+            ],
+            max_tokens=8192,
+            model=LLAMA_MODEL,
+            stream=True,
+        )
+        s = ""
+        start = time.time()
+        for chunk in r:
+            if chunk.choices[0].delta.content is None:
+                break
+            s += chunk.choices[0].delta.content
+            if time.time() - start > 1.5:
+                start = time.time()
+                bot_reply_markdown(reply_id, who, s, bot, split_text=False)
+        # maybe not complete
+        try:
+            bot_reply_markdown(reply_id, who, s, bot)
+        except:
+            pass
+
+    except Exception as e:
+        print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
+        bot_reply_markdown(reply_id, who, "answer wrong", bot)
+        return f"\n---\n{who}:\nAnswer wrong", reply_id.message_id
+
+    answer = f"\n---\n{who}:\n{s}"
+    return answer, reply_id.message_id
 
 
 # TODO: Perplexity looks good. `pplx_answer`
 
 
-def final_answer(latest_message: Message, bot: TeleBot, full, answers_list):
+def final_answer(latest_message: Message, bot: TeleBot, full_answer: str, answers_list):
     """final answer"""
     who = "Answer it"
     reply_id = bot_reply_first(latest_message, who, bot)
-    ph_s = ph.create_page_md(title="Answer it", markdown_text=full)
+    ph_s = ph.create_page_md(title="Answer it", markdown_text=full_answer)
     bot_reply_markdown(reply_id, who, f"**[Full Answer]({ph_s})**", bot)
     # delete the chat message, only leave a telegra.ph link
     for i in answers_list:
@@ -357,9 +552,9 @@ def final_answer(latest_message: Message, bot: TeleBot, full, answers_list):
     if SUMMARY == None:
         pass
     elif COHERE_USE and COHERE_API_KEY and SUMMARY == "cohere":
-        summary_cohere(bot, full, ph_s, reply_id)
+        summary_cohere(bot, full_answer, ph_s, reply_id)
     elif GEMINI_USE and GOOGLE_GEMINI_KEY and SUMMARY == "gemini":
-        summary_gemini(bot, full, ph_s, reply_id)
+        summary_gemini(bot, full_answer, ph_s, reply_id)
     else:
         pass
 
