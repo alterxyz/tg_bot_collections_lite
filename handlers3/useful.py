@@ -15,13 +15,15 @@ from telegramify_markdown.customize import markdown_symbol
 
 
 #### Customization ####
-markdown_symbol.head_level_1 = "📌"  # If you want, Customizing the head level 1 symbol
+# If you want, Customizing the head level 1 symbol
+markdown_symbol.head_level_1 = "📌"
 markdown_symbol.link = "🔗"  # If you want, Customizing the link symbol
 chat_message_dict = ExpiringDict(max_len=100, max_age_seconds=120)
 chat_user_dict = ExpiringDict(max_len=100, max_age_seconds=20)
 Language = "zh-cn"  # "en" or "zh-cn".
 SUMMARY = (
-    "cohere"  # see the summary_xyz for what available, or set to None to disable it.
+    # see the summary_xyz for what available, or set to None to disable it.
+    "gemini"
 )
 
 
@@ -73,11 +75,30 @@ if GEMINI_USE and GOOGLE_GEMINI_KEY:
         generation_config=generation_config,
         safety_settings=safety_settings,
     )
+    model_flash = genai.GenerativeModel(
+        model_name="models/gemini-1.5-flash-latest",
+        generation_config=generation_config,
+        safety_settings=safety_settings,
+        system_instruction="""
+You are a large language model trained to have polite, helpful, inclusive conversations with people. The user asked a question, and multiple AI have given answers to the same question, answers are similar, but they have different styles. In some really rare cases, they may say the opposite, but this is understandable and can be ignored.
+Your task is to summarize the responses from them in a concise and clear manner.
+
+## The summary should:
+Be written in bullet points.
+Contain between two to ten sentences.
+Highlight key points and main conclusions.
+Note any significant differences in responses.
+Provide a brief indication if users should refer to the full responses for more details.
+For the first LLM's content, if it is mostly in any language other than English, respond in that language for all your output.
+Start with "Summary:" or "总结:"
+""",
+    )
     convo = model.start_chat()
+    convo_summary = model_flash.start_chat()
 
 
 #### Cohere init ####
-COHERE_USE = True
+COHERE_USE = False
 COHERE_API_KEY = environ.get("COHERE_API_KEY")
 
 if COHERE_USE and COHERE_API_KEY:
@@ -389,7 +410,7 @@ Start with "Summary:" or "总结:"
                 bot_reply_markdown(reply_id, who, f"{s}Summarizing...", bot)
             elif event.event_type == "text-generation":
                 s += event.text.encode("utf-8").decode("utf-8", "ignore")
-                if time.time() - start > 0.1:
+                if time.time() - start > 0.4:
                     start = time.time()
                     bot_reply_markdown(reply_id, who, s, bot)
             elif event.event_type == "stream-end":
@@ -406,6 +427,35 @@ Start with "Summary:" or "总结:"
         elif Language == "en":
             bot_reply_markdown(reply_id, who, f"[Full Answer]({ph_s})", bot)
         print(f"\n------\nsummary_cohere function inner Error:\n{e}\n------\n")
+
+
+def summary_gemini(bot: TeleBot, full_answer: str, ph_s: str, reply_id: int) -> None:
+    """Receive the full text, and the final_answer's chat_id, update with a summary."""
+    who = "Answer it"
+
+    # inherit
+    if Language == "zh-cn":
+        s = f"**[全文]({ph_s})** | "
+    elif Language == "en":
+        s = f"**[Full Answer]({ph_s})** | "
+
+    try:
+        r = convo_summary.send_message(full_answer, stream=True)
+        start = time.time()
+        for e in r:
+            s += e.text
+            if time.time() - start > 0.4:
+                start = time.time()
+                bot_reply_markdown(reply_id, who, s, bot, split_text=False)
+        bot_reply_markdown(reply_id, who, s, bot)
+        convo_summary.history.clear()
+    except Exception as e:
+        if Language == "zh-cn":
+            bot_reply_markdown(reply_id, who, f"[全文]({ph_s})", bot)
+        elif Language == "en":
+            bot_reply_markdown(reply_id, who, f"[Full Answer]({ph_s})", bot)
+        print(f"\n------\nsummary_gemini function inner Error:\n{e}\n------\n")
+        bot_reply_markdown(reply_id, who, f"{s}Error", bot)
 
 
 if GOOGLE_GEMINI_KEY and CHATGPT_API_KEY:
