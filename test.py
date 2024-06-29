@@ -4,6 +4,7 @@ import requests
 import markdown
 from bs4 import BeautifulSoup
 
+
 class TelegraphAPI:
     def __init__(
         self,
