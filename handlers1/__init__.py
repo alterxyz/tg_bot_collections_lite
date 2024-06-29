@@ -32,7 +32,12 @@ def bot_reply_first(message: Message, who: str, bot: TeleBot) -> Message:
 
 
 def bot_reply_markdown(
-    reply_id: Message, who: str, text: str, bot: TeleBot, split_text: bool = True
+    reply_id: Message,
+    who: str,
+    text: str,
+    bot: TeleBot,
+    split_text: bool = True,
+    disable_web_page_preview: bool = False,
 ) -> bool:
     """
     reply the Markdown by take care of the message length.
@@ -45,6 +50,7 @@ def bot_reply_markdown(
                 chat_id=reply_id.chat.id,
                 message_id=reply_id.message_id,
                 parse_mode="MarkdownV2",
+                disable_web_page_preview=disable_web_page_preview,
             )
             return True
 
@@ -55,6 +61,7 @@ def bot_reply_markdown(
             chat_id=reply_id.chat.id,
             message_id=reply_id.message_id,
             parse_mode="MarkdownV2",
+            disable_web_page_preview=disable_web_page_preview,
         )
         for i in range(1, len(msgs)):
             bot.reply_to(
@@ -71,6 +78,7 @@ def bot_reply_markdown(
             f"*{who}*:\n{text}",
             chat_id=reply_id.chat.id,
             message_id=reply_id.message_id,
+            disable_web_page_preview=disable_web_page_preview,
         )
         return False
 

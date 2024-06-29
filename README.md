@@ -88,6 +88,8 @@ pip install cohere
 
 ## Development Notes
 
+See [pyTelegramBotAPI](https://github.com/eternnoir/pyTelegramBotAPI)
+
 ### About Sync
 
 Try install FreeFileSync and run the `SyncSettings.ffs_gui` file.
