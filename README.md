@@ -4,9 +4,7 @@ tg_bot_collection <https://github.com/yihong0618/tg_bot_collections>.
 
 This project would maximize the similarity with the original project such as core functions and usage.
 
-Try others like gpt or gemini or cohere at <https://t.me/tealmoon_ai_v1_bot>
-
-Try `/answer_it` (V2) at <https://t.me/tealmoon_ai_v1_alt_bot>
+Try <https://t.me/tealmoon_ai_v1_alt_bot>
 
 ## Usage
 
@@ -48,15 +46,13 @@ If you had environment api keys already, you can skip this step.
 1. Paste the "token_key.json" file in the root directory of the project.
 2. Run `sudo python3 env.py load` to load(overwrite) the environment keys from the "token_key.json" file.
 
-#### Select the handler
+### TODO
 
-Pick one of the handler(folder), rename the folder to `handler`.
+- [ ] Naming issue:
 
-The handler(folder) are:
+Rename `useful.py` to something else, otherwise it will block other handlers.
 
-1. bots with usage as `/command <text>` or `command: <text>`, like `/gpt <text>` or `gpt: <text>`.
-2. pure message, then come with `/answer_it` (Ver.1)
-3. pure message, then come with `/answer_it` (Ver.2, modularized, summary, and more llm models supported.)
+Currently it is renamed to `danger.py`, <https://t.me/tealmoon_ai_v1_alt_bot> all commands are working.
 
 ### Install the dependencies
 
