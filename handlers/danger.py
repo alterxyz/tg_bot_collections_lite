@@ -25,30 +25,47 @@ TELEGRA_PH_TOKEN = environ.get("TELEGRA_PH_TOKEN")
 # Edit "Store_Token = False" in "__init__.py" to True to store it
 ph = TelegraphAPI(TELEGRA_PH_TOKEN)
 
-
-#### Customization ####
+#####################################################################
+#### Customization ##################################################
 Language = "zh-cn"  # "en" or "zh-cn".
 SUMMARY = "gemini"  # "cohere" or "gemini" or None
 General_clean = True  # Will Delete LLM message
 Extra_clean = True  # Will Delete command message too
-Link_Clean = False  # True will disable Instant View / Web Preview
+Link_Clean = True  # True will disable Instant View / Web Preview
+Stream_Thread = 2  # How many stream LLM will stream at the same time
+Complete_Thread = 3  # How many non-stream LLM will run at the same time
+Stream_Timeout = 45  # If not complete in 45s, will stop wait or raise Exception timeout
+MESSAGE_MAX_LENGTH = 4096  # Message after url enrich may too long
+Hint = (
+    "\n(Try /answer_it after non-command messages)"
+    if Language == "en"
+    else "\n(在消息后发送 '/answer_it')"
+)
 #### LLMs ####
 GEMINI_USE = True
-CHATGPT_USE = True
+CHATGPT_USE = False
 CLADUE_USE = False
 QWEN_USE = True
-
 COHERE_USE = False  # Slow, but web search
-LLAMA_USE = False  # prompted for Language
+LLAMA_USE = True  # prompted for Language
 
-COHERE_USE_BACKGROUND = True  # Only display in telegra.ph
-LLAMA_USE_BACKGROUND = True  # But telegra.ph's **instant view** may not up to date
+CHATGPT_COMPLETE = False  # sync mode
+CLADUE_COMPLETE = False  # Only display in telegra.ph
+COHERE_COMPLETE = False
+LLAMA_COMPLETE = False
+
+GEMINI_USE_THREAD = False  # Maybe not work
+
+COHERE_APPEND = True  # Update later to ph, for extremely long content
+
+#### Customization End ##############################################
+#####################################################################
 
 #### LLMs init ####
 #### OpenAI init ####
 CHATGPT_API_KEY = environ.get("OPENAI_API_KEY")
 CHATGPT_BASE_URL = environ.get("OPENAI_API_BASE") or "https://api.openai.com/v1"
-if CHATGPT_USE and CHATGPT_API_KEY:
+if (CHATGPT_USE or CHATGPT_COMPLETE) and CHATGPT_API_KEY:
     from openai import OpenAI
 
     CHATGPT_PRO_MODEL = "gpt-4o-2024-05-13"
@@ -57,7 +74,7 @@ if CHATGPT_USE and CHATGPT_API_KEY:
 
 #### Gemini init ####
 GOOGLE_GEMINI_KEY = environ.get("GOOGLE_GEMINI_KEY")
-if GEMINI_USE and GOOGLE_GEMINI_KEY:
+if (GEMINI_USE or GEMINI_USE_THREAD) and GOOGLE_GEMINI_KEY:
     import google.generativeai as genai
     from google.generativeai import ChatSession
     from google.generativeai.types.generation_types import StopCandidateException
@@ -82,6 +99,26 @@ if GEMINI_USE and GOOGLE_GEMINI_KEY:
         model_name="gemini-1.5-pro-latest",
         generation_config=generation_config,
         safety_settings=safety_settings,
+        system_instruction=f"""
+You are an AI assistant added to a group chat to provide help or answer questions. You only have access to the most recent message in the chat, which will be the next message you receive after this system prompt. Your task is to provide a helpful and relevant response based on this information.
+
+Please adhere to these guidelines when formulating your response:
+
+1. Address the content of the message directly and proactively.
+2. If the message is a question or request, provide a comprehensive answer or assistance to the best of your ability.
+3. Use your general knowledge and capabilities to fill in gaps where context might be missing.
+4. Keep your response concise yet informative, appropriate for a group chat setting.
+5. Maintain a friendly, helpful, and confident tone throughout.
+6. If the message is unclear:
+   - Make reasonable assumptions to provide a useful response.
+   - If necessary, offer multiple interpretations or answers to cover possible scenarios.
+7. Aim to make your response as complete and helpful as possible, even with limited context.
+8. You must respond in {Language}.
+
+Your response should be natural and fitting for a group chat context. While you only have access to this single message, use your broad knowledge base to provide informative and helpful answers. Be confident in your responses, but if you're making assumptions, briefly acknowledge this fact.
+
+Remember, the group administrator has approved your participation and will review responses as needed, so focus on being as helpful as possible rather than being overly cautious.
+""",
     )
     model_flash = genai.GenerativeModel(
         model_name="gemini-1.5-flash-latest",
@@ -103,7 +140,7 @@ Start with "Summary:" or"总结:"
 #### Cohere init ####
 COHERE_API_KEY = environ.get("COHERE_API_KEY")
 
-if (COHERE_USE or COHERE_USE_BACKGROUND) and COHERE_API_KEY:
+if (COHERE_USE or COHERE_COMPLETE or COHERE_APPEND) and COHERE_API_KEY:
     import cohere
 
     COHERE_MODEL = "command-r-plus"
@@ -122,7 +159,7 @@ if QWEN_USE and QWEN_API_KEY:
 #### Claude init ####
 ANTHROPIC_API_KEY = environ.get("ANTHROPIC_API_KEY")
 # use openai for claude
-if CLADUE_USE and ANTHROPIC_API_KEY:
+if (CLADUE_USE or CLADUE_COMPLETE) and ANTHROPIC_API_KEY:
     ANTHROPIC_BASE_URL = environ.get("ANTHROPIC_BASE_URL")
     ANTHROPIC_MODEL = "claude-3-5-sonnet-20240620"
     claude_client = OpenAI(
@@ -131,7 +168,7 @@ if CLADUE_USE and ANTHROPIC_API_KEY:
 
 #### llama init ####
 LLAMA_API_KEY = environ.get("GROQ_API_KEY")
-if (LLAMA_USE or LLAMA_USE_BACKGROUND) and LLAMA_API_KEY:
+if (LLAMA_USE or LLAMA_COMPLETE) and LLAMA_API_KEY:
     from groq import Groq
 
     llama_client = Groq(api_key=LLAMA_API_KEY)
@@ -199,15 +236,22 @@ def answer_it_handler(message: Message, bot: TeleBot) -> None:
 
     chat_id = message.chat.id
     latest_message = chat_message_dict.get(chat_id)
-    m = latest_message.text.strip()
+    m = original_m = latest_message.text.strip()
     m = enrich_text_with_urls(m)
     full_answer = f"Question:\n{m}\n" if len(m) < 300 else ""
-    if Extra_clean:  # delete the command message
-        bot.delete_message(chat_id, message.message_id)
+    if len(m) > MESSAGE_MAX_LENGTH:
+        a = (
+            "The message is too long, please shorten it."
+            if Language == "en"
+            else "消息太长，请缩短。"
+        )
+        bot.reply_to(message, a)
+        return
+    full_chat_id_list = []
 
     #### Answers Thread ####
-    executor = ThreadPoolExecutor(max_workers=5)
-    if GEMINI_USE and GOOGLE_GEMINI_KEY:
+    executor = ThreadPoolExecutor(max_workers=Stream_Thread)
+    if GEMINI_USE_THREAD and GOOGLE_GEMINI_KEY:
         gemini_future = executor.submit(gemini_answer, latest_message, bot, m)
     if CHATGPT_USE and CHATGPT_API_KEY:
         chatgpt_future = executor.submit(chatgpt_answer, latest_message, bot, m)
@@ -220,9 +264,60 @@ def answer_it_handler(message: Message, bot: TeleBot) -> None:
     if LLAMA_USE and LLAMA_API_KEY:
         llama_future = executor.submit(llama_answer, latest_message, bot, m)
 
-    #### Answers List ####
-    full_chat_id_list = []
+    #### Complete Message Thread ####
+    executor2 = ThreadPoolExecutor(max_workers=Complete_Thread)
+    if CHATGPT_COMPLETE and CHATGPT_API_KEY:
+        complete_chatgpt_future = executor2.submit(complete_chatgpt, m)
+    if CLADUE_COMPLETE and ANTHROPIC_API_KEY:
+        complete_claude_future = executor2.submit(complete_claude, m)
+    if LLAMA_COMPLETE and LLAMA_API_KEY:
+        complete_llama_future = executor2.submit(complete_llama, m)
+    if COHERE_COMPLETE and COHERE_API_KEY:
+        complete_cohere_future = executor2.submit(complete_cohere, m)
+
+    #### Gemini Answer Individual ####
     if GEMINI_USE and GOOGLE_GEMINI_KEY:
+        g_who = "Gemini Pro"
+        g_s = ""
+        g_reply_id = bot_reply_first(latest_message, g_who, bot)
+        try:
+            g_r = convo.send_message(m, stream=True)
+            g_start = time.time()
+            g_overall_start = time.time()
+            for e in g_r:
+                g_s += e.text
+                if time.time() - g_start > 1.7:
+                    g_start = time.time()
+                    bot_reply_markdown(g_reply_id, g_who, g_s, bot, split_text=False)
+                if time.time() - g_overall_start > Stream_Timeout:
+                    raise Exception("Gemini Timeout")
+            bot_reply_markdown(g_reply_id, g_who, g_s, bot)
+            try:
+                convo.history.clear()
+            except:
+                print(
+                    f"\n------\n{g_who} convo.history.clear() Error / Unstoppable\n------\n"
+                )
+                pass
+        except Exception as e:
+            print(f"\n------\n{g_who} function gemini outter Error:\n{e}\n------\n")
+            try:
+                convo.history.clear()
+            except:
+                print(
+                    f"\n------\n{g_who} convo.history.clear() Error / Unstoppable\n------\n"
+                )
+                pass
+            bot_reply_markdown(g_reply_id, g_who, "Error", bot)
+            full_answer += f"\n---\n{g_who}:\nAnswer wrong"
+        full_chat_id_list.append(g_reply_id.message_id)
+        full_answer += llm_answer(g_who, g_s)
+    else:
+        pass
+
+    #### Answers List ####
+
+    if GEMINI_USE_THREAD and GOOGLE_GEMINI_KEY:
         answer_gemini, gemini_chat_id = gemini_future.result()
         full_chat_id_list.append(gemini_chat_id)
         full_answer += answer_gemini
@@ -247,13 +342,29 @@ def answer_it_handler(message: Message, bot: TeleBot) -> None:
         full_chat_id_list.append(llama_chat_id)
         full_answer += answer_llama
 
+    #### Complete Messages ####
+    if CHATGPT_COMPLETE and CHATGPT_API_KEY:
+        full_answer += complete_chatgpt_future.result()
+    if CLADUE_COMPLETE and ANTHROPIC_API_KEY:
+        full_answer += complete_claude_future.result()
+    if COHERE_COMPLETE and COHERE_API_KEY:
+        full_answer += complete_cohere_future.result()
+    if LLAMA_COMPLETE and LLAMA_API_KEY:
+        full_answer += complete_llama_future.result()
+
     print(full_chat_id_list)
 
     if len(m) > 300:
-        full_answer += llm_answer("Question", m)
+        full_answer = f"{llm_answer('Question', original_m)}{full_answer}{llm_answer('Question', m)}"
 
     ##### Telegraph #####
-    final_answer(latest_message, bot, full_answer, full_chat_id_list)
+    if full_chat_id_list == []:
+        bot.reply_to(message, "No Any Answer, Please check log.")
+    else:
+        final_answer(latest_message, bot, full_answer, full_chat_id_list)
+
+    if Extra_clean:  # delete the command message
+        bot.delete_message(chat_id, message.message_id)
 
 
 def update_time():
@@ -266,14 +377,14 @@ def llm_answer(who: str, s: str) -> str:
     return f"\n\n---\n## {who}\n{s}"
 
 
-def llm_background(path: str, full_answer: str, m: str) -> str:
-    """Update the telegra.ph page with background answer result. Return new full answer."""
+def llm_background_ph_update(path: str, full_answer: str, m: str) -> str:
+    """Update the telegra.ph page with Non Stream Answer result. Return new full answer."""
     ph_path = re.search(r"https?://telegra\.ph/(.+)", path).group(1)
     full_answer += m + update_time()
     try:
         ph.edit_page_md(path=ph_path, title="Answer it", markdown_text=full_answer)
     except Exception as e:
-        print(f"\n------\nllm_background Error:\n{e}\n------\n")
+        print(f"\n------\nllm_background_ph_update Error:\n{e}\n------\n")
     return full_answer
 
 
@@ -287,16 +398,31 @@ def gemini_answer(latest_message: Message, bot: TeleBot, m):
         r = convo.send_message(m, stream=True)
         s = ""
         start = time.time()
+        overall_start = time.time()
         for e in r:
             s += e.text
             if time.time() - start > 1.7:
                 start = time.time()
                 bot_reply_markdown(reply_id, who, s, bot, split_text=False)
+            if time.time() - overall_start > Stream_Timeout:  # Timeout
+                raise Exception("Gemini Timeout")
         bot_reply_markdown(reply_id, who, s, bot)
-        convo.history.clear()
+        try:
+            convo.history.clear()
+        except:
+            print(
+                f"\n------\n{who} convo.history.clear() Error / Unstoppable\n------\n"
+            )
+            pass
     except Exception as e:
         print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
-        convo.history.clear()
+        try:
+            convo.history.clear()
+        except:
+            print(
+                f"\n------\n{who} convo.history.clear() Error / Unstoppable\n------\n"
+            )
+            pass
         bot_reply_markdown(reply_id, who, "Error", bot)
         return f"\n---\n{who}:\nAnswer wrong", reply_id.message_id
 
@@ -319,6 +445,7 @@ def chatgpt_answer(latest_message: Message, bot: TeleBot, m):
         )
         s = ""
         start = time.time()
+        overall_start = time.time()
         for chunk in r:
             if chunk.choices[0].delta.content is None:
                 break
@@ -326,6 +453,9 @@ def chatgpt_answer(latest_message: Message, bot: TeleBot, m):
             if time.time() - start > 1.5:
                 start = time.time()
                 bot_reply_markdown(reply_id, who, s, bot, split_text=False)
+            if time.time() - overall_start > Stream_Timeout:  # Timeout
+                s += "\n\nTimeout"
+                break
         # maybe not complete
         try:
             bot_reply_markdown(reply_id, who, s, bot)
@@ -354,6 +484,7 @@ def claude_answer(latest_message: Message, bot: TeleBot, m):
         )
         s = ""
         start = time.time()
+        overall_start = time.time()
         for chunk in r:
             if chunk.choices[0].delta.content is None:
                 break
@@ -361,6 +492,9 @@ def claude_answer(latest_message: Message, bot: TeleBot, m):
             if time.time() - start > 1.5:
                 start = time.time()
                 bot_reply_markdown(reply_id, who, s, bot, split_text=False)
+            if time.time() - overall_start > Stream_Timeout:  # Timeout
+                s += "\n\nTimeout"
+                break
         # maybe not complete
         try:
             bot_reply_markdown(reply_id, who, s, bot)
@@ -405,6 +539,7 @@ def cohere_answer(latest_message: Message, bot: TeleBot, m):
         s = ""
         source = ""
         start = time.time()
+        overall_start = time.time()
         for event in stream:
             if event.event_type == "stream-start":
                 bot_reply_markdown(reply_id, who, "Thinking...", bot)
@@ -425,6 +560,9 @@ def cohere_answer(latest_message: Message, bot: TeleBot, m):
                         bot,
                         split_text=True,
                     )
+                if time.time() - overall_start > Stream_Timeout:  # Timeout
+                    s += "\n\nTimeout"
+                    break
             elif event.event_type == "stream-end":
                 break
         content = (
@@ -452,13 +590,20 @@ def qwen_answer(latest_message: Message, bot: TeleBot, m):
     reply_id = bot_reply_first(latest_message, who, bot)
     try:
         r = qwen_client.chat.completions.create(
-            messages=[{"role": "user", "content": m}],
+            messages=[
+                {
+                    "content": f"You are an AI assistant added to a group chat to provide help or answer questions. You only have access to the most recent message in the chat, which will be the next message you receive after this system prompt. Your task is to provide a helpful and relevant response based on this information.\n\nPlease adhere to these guidelines when formulating your response:\n\n1. Address the content of the message directly and proactively.\n2. If the message is a question or request, provide a comprehensive answer or assistance to the best of your ability.\n3. Use your general knowledge and capabilities to fill in gaps where context might be missing.\n4. Keep your response concise yet informative, appropriate for a group chat setting.\n5. Maintain a friendly, helpful, and confident tone throughout.\n6. If the message is unclear:\n   - Make reasonable assumptions to provide a useful response.\n   - If necessary, offer multiple interpretations or answers to cover possible scenarios.\n7. Aim to make your response as complete and helpful as possible, even with limited context.\n8. You must respond in {Language}.\n\nYour response should be natural and fitting for a group chat context. While you only have access to this single message, use your broad knowledge base to provide informative and helpful answers. Be confident in your responses, but if you're making assumptions, briefly acknowledge this fact.\n\nRemember, the group administrator has approved your participation and will review responses as needed, so focus on being as helpful as possible rather than being overly cautious.",
+                    "role": "system",
+                },
+                {"role": "user", "content": m},
+            ],
             max_tokens=8192,
             model=QWEN_MODEL,
             stream=True,
         )
         s = ""
         start = time.time()
+        overall_start = time.time()
         for chunk in r:
             if chunk.choices[0].delta.content is None:
                 break
@@ -466,6 +611,9 @@ def qwen_answer(latest_message: Message, bot: TeleBot, m):
             if time.time() - start > 1.5:
                 start = time.time()
                 bot_reply_markdown(reply_id, who, s, bot, split_text=False)
+            if time.time() - overall_start > Stream_Timeout:  # Timeout
+                s += "\n\nTimeout"
+                break
         # maybe not complete
         try:
             bot_reply_markdown(reply_id, who, s, bot)
@@ -499,6 +647,7 @@ def llama_answer(latest_message: Message, bot: TeleBot, m):
         )
         s = ""
         start = time.time()
+        overall_start = time.time()
         for chunk in r:
             if chunk.choices[0].delta.content is None:
                 break
@@ -506,6 +655,8 @@ def llama_answer(latest_message: Message, bot: TeleBot, m):
             if time.time() - start > 1.5:
                 start = time.time()
                 bot_reply_markdown(reply_id, who, s, bot, split_text=False)
+            if time.time() - overall_start > Stream_Timeout:  # Timeout
+                raise Exception("Llama Timeout")
         # maybe not complete
         try:
             bot_reply_markdown(reply_id, who, s, bot)
@@ -533,7 +684,7 @@ def final_answer(latest_message: Message, bot: TeleBot, full_answer: str, answer
 
     # greate new telegra.ph page
     ph_s = ph.create_page_md(title="Answer it", markdown_text=full_answer)
-    bot_reply_markdown(reply_id, who, f"**[Full Answer]({ph_s})**", bot)
+    bot_reply_markdown(reply_id, who, f"**[Full Answer]({ph_s})**\n{Hint}", bot)
 
     # delete the chat message, only leave a telegra.ph link
     if General_clean:
@@ -548,14 +699,11 @@ def final_answer(latest_message: Message, bot: TeleBot, full_answer: str, answer
         bot_reply_markdown(reply_id, who, s, bot, disable_web_page_preview=True)
 
     #### Background LLM ####
-    # Run background llm, no show to telegram, just update the ph page, Good for slow llm
-    if LLAMA_USE_BACKGROUND and LLAMA_API_KEY:
-        llama_b_m = background_llama(latest_message.text)
-        full_answer = llm_background(ph_s, full_answer, llama_b_m)
+    # Run background llm, no show to telegram, just append the ph page, Good for slow llm
 
-    if COHERE_USE_BACKGROUND and COHERE_API_KEY:
-        cohere_b_m = background_cohere(latest_message.text)
-        full_answer = llm_background(ph_s, full_answer, cohere_b_m)
+    if COHERE_APPEND and COHERE_API_KEY:
+        cohere_a = complete_cohere(latest_message.text)
+        full_answer = llm_background_ph_update(ph_s, full_answer, cohere_a)
 
 
 def llm_summary(bot, full_answer, ph_s, reply_id) -> str:
@@ -570,10 +718,45 @@ def llm_summary(bot, full_answer, ph_s, reply_id) -> str:
     return s
 
 
-def background_cohere(m: str) -> str:
-    """we run cohere get the full answer in background"""
+def complete_chatgpt(m: str) -> str:
+    """we run chatgpt get the full answer"""
+    who = "ChatGPT Pro"
+    try:
+        r = client.chat.completions.create(
+            messages=[{"role": "user", "content": m}],
+            max_tokens=4096,
+            model=CHATGPT_PRO_MODEL,
+        )
+        s = r.choices[0].message.content.encode("utf-8").decode()
+        content = llm_answer(who, s)
+    except Exception as e:
+        print(f"\n------\ncomplete_chatgpt Error:\n{e}\n------\n")
+        content = llm_answer(who, "Non Stream Answer wrong")
+    return content
+
+
+def complete_claude(m: str) -> str:
+    """we run claude get the full answer"""
+    who = "Claude Pro"
+    try:
+        r = claude_client.chat.completions.create(
+            messages=[{"role": "user", "content": m}],
+            max_tokens=4096,
+            model=ANTHROPIC_MODEL,
+        )
+        s = r.choices[0].message.content.encode("utf-8").decode()
+        content = llm_answer(who, s)
+    except Exception as e:
+        print(f"\n------\ncomplete_claude Error:\n{e}\n------\n")
+        content = llm_answer(who, "Non Stream Answer wrong")
+    return content
+
+
+def complete_cohere(m: str) -> str:
+    """we run cohere get the full answer"""
     who = "Command R Plus"
     try:
+        overall_start = time.time()
         stream = co.chat_stream(
             model=COHERE_MODEL,
             message=m,
@@ -594,18 +777,22 @@ def background_cohere(m: str) -> str:
                 s += event.text.encode("utf-8").decode("utf-8", "ignore")
             elif event.event_type == "stream-end":
                 break
+            if time.time() - overall_start > Stream_Timeout:  # Timeout
+                s += "\n\nTimeout"
+                break
         content = llm_answer(who, f"{s}\n\n---\n{source}")
 
     except Exception as e:
-        print(f"\n------\nbackground_cohere Error:\n{e}\n------\n")
-        content = llm_answer(who, "Background Answer wrong")
+        print(f"\n------\ncomplete_cohere Error:\n{e}\n------\n")
+        content = llm_answer(who, "Non Stream Answer wrong")
     return content
 
 
-def background_llama(m: str) -> str:
-    """we run llama get the full answer in background"""
+def complete_llama(m: str) -> str:
+    """we run llama get the full answer"""
     who = "llama"
     try:
+        overall_start = time.time()
         r = llama_client.chat.completions.create(
             messages=[
                 {
@@ -623,10 +810,12 @@ def background_llama(m: str) -> str:
             if chunk.choices[0].delta.content is None:
                 break
             s += chunk.choices[0].delta.content
+            if time.time() - overall_start > Stream_Timeout:  # Timeout
+                raise Exception("Llama complete Running Timeout")
 
     except Exception as e:
-        print(f"\n------\nbackground_llama Error:\n{e}\n------\n")
-        s = "Background Answer wrong"
+        print(f"\n------\ncomplete_llama Error:\n{e}\n------\n")
+        s = "Non Stream Answer wrong"
     return llm_answer(who, s)
 
 
@@ -636,9 +825,9 @@ def summary_cohere(bot: TeleBot, full_answer: str, ph_s: str, reply_id: int) -> 
 
     # inherit
     if Language == "zh-cn":
-        s = f"**[全文]({ph_s})** | "
+        s = f"**[全文]({ph_s})**{Hint}\n"
     elif Language == "en":
-        s = f"**[Full Answer]({ph_s})** | "
+        s = f"**[Full Answer]({ph_s})**{Hint}\n"
 
     # filter
     length = len(full_answer)  # max 128,000 tokens...
@@ -668,6 +857,7 @@ Start with "Summary:" or "总结:"
         )
 
         start = time.time()
+        overall_start = time.time()
         for event in stream:
             if event.event_type == "stream-start":
                 bot_reply_markdown(reply_id, who, f"{s}Summarizing...", bot)
@@ -677,6 +867,9 @@ Start with "Summary:" or "总结:"
                     start = time.time()
                     bot_reply_markdown(reply_id, who, s, bot)
             elif event.event_type == "stream-end":
+                break
+            if time.time() - overall_start > Stream_Timeout:
+                s += "\n\nTimeout"
                 break
 
         try:
@@ -699,26 +892,36 @@ def summary_gemini(bot: TeleBot, full_answer: str, ph_s: str, reply_id: int) -> 
 
     # inherit
     if Language == "zh-cn":
-        s = f"**[🔗全文]({ph_s})** | "
+        s = f"**[🔗全文]({ph_s})**{Hint}\n"
     elif Language == "en":
-        s = f"**[🔗Full Answer]({ph_s})** | "
+        s = f"**[🔗Full Answer]({ph_s})**{Hint}\n"
 
     try:
         r = convo_summary.send_message(full_answer, stream=True)
         start = time.time()
+        overall_start = time.time()
         for e in r:
             s += e.text
             if time.time() - start > 0.4:
                 start = time.time()
                 bot_reply_markdown(reply_id, who, s, bot, split_text=False)
+            if time.time() - overall_start > Stream_Timeout:
+                raise Exception("Gemini Summary Timeout")
         bot_reply_markdown(reply_id, who, s, bot)
         convo_summary.history.clear()
         return s
     except Exception as e:
         if Language == "zh-cn":
-            bot_reply_markdown(reply_id, who, f"[全文]({ph_s})", bot)
+            bot_reply_markdown(reply_id, who, f"[全文]({ph_s}){Hint}", bot)
         elif Language == "en":
-            bot_reply_markdown(reply_id, who, f"[Full Answer]({ph_s})", bot)
+            bot_reply_markdown(reply_id, who, f"[Full Answer]({ph_s}){Hint}", bot)
+        try:
+            convo.history.clear()
+        except:
+            print(
+                f"\n------\n{who} convo.history.clear() Error / Unstoppable\n------\n"
+            )
+            pass
         print(f"\n------\nsummary_gemini function inner Error:\n{e}\n------\n")
         bot_reply_markdown(reply_id, who, f"{s}Error", bot)
 

@@ -19,6 +19,24 @@ python3 tg.py ${TELEGRAM_BOT_TOKEN}
 
 ---
 
+### Update the bot
+
+```shell
+git checkout main
+git pull origin main
+
+# If Aborting due to local changes
+# Option 1:
+git stash
+git pull origin main
+git stash pop
+
+# Option 2:
+git diff --stat origin/main..HEAD
+# Make sure your files that do not want to be overwritten are not in the list.
+git reset --hard origin/main
+```
+
 ### Setup
 
 #### Init the repo
