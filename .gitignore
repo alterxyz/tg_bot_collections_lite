@@ -171,3 +171,4 @@ nohup.out
 *.wav
 token_key.json
 draft.md
+secrets_my.json
