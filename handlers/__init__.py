@@ -178,6 +178,9 @@ def list_available_commands() -> list[str]:
         if child.name.startswith("_"):
             continue
         commands.append(child.stem)
+    if "useful" in commands:
+        commands.remove("useful")
+        commands.append("useful")
     return commands
 
 
