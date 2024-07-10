@@ -6,6 +6,13 @@ This project would maximize the similarity with the original project such as cor
 
 Try <https://t.me/tealmoon_ai_v1_alt_bot>
 
+## Sync and Todo
+
+- [ ] 2024/07/09
+    - [ ] chore: UX improvement
+    - [ ] `useful.py`: Let user know `/answer_it` usage: Type or **click the blue text**.
+    - [ ] `cohere.py`: Enable link preview disabled for cleaner output.
+
 ## Usage
 
 ### Run the bot

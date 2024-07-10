@@ -13,6 +13,9 @@ from . import *
 
 from telegramify_markdown.customize import markdown_symbol
 
+# Define the load priority, lower numbers have higher priority
+load_priority = 1000
+
 # If you want, Customizing the head level 1 symbol
 markdown_symbol.head_level_1 = "📌"
 markdown_symbol.link = "🔗"  # If you want, Customizing the link symbol
@@ -37,9 +40,9 @@ Complete_Thread = 3  # How many non-stream LLM will run at the same time
 Stream_Timeout = 45  # If not complete in 45s, will stop wait or raise Exception timeout
 MESSAGE_MAX_LENGTH = 4096  # Message after url enrich may too long
 Hint = (
-    "\n(Try /answer_it after non-command messages)"
+    "\n(Need answer? Type or tap /answer_it )"
     if Language == "en"
-    else "\n(在消息后发送 '/answer_it')"
+    else "\n(需要回答? 输入或点击 /answer_it )"
 )
 #### LLMs ####
 GEMINI_USE = True
@@ -196,7 +199,7 @@ def latest_handle_messages(message: Message, bot: TeleBot):
     elif message.text.startswith(
         (
             "md",
-            "chatgpt",
+            "gpt",
             "gemini",
             "qwen",
             "map",
@@ -684,8 +687,12 @@ def final_answer(latest_message: Message, bot: TeleBot, full_answer: str, answer
 
     # greate new telegra.ph page
     ph_s = ph.create_page_md(title="Answer it", markdown_text=full_answer)
-    bot_reply_markdown(reply_id, who, f"**[Full Answer]({ph_s})**\n{Hint}", bot)
-
+    bot_reply_markdown(
+        reply_id,
+        who,
+        f"**[{('🔗Full Answer' if Language == 'en' else '🔗全文')}]({ph_s})**{Hint}",
+        bot,
+    )
     # delete the chat message, only leave a telegra.ph link
     if General_clean:
         for i in answers_list:

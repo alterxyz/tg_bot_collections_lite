@@ -19,7 +19,8 @@ def get_secret(
         raise KeyError(f"Secret not found: Group '{secret_group}', Key '{secret_key}'")
     except json.JSONDecodeError:
         raise ValueError(f"Invalid JSON format in secrets file: {secrets_file}")
-    
+
+
 def to_env(secret_group: str, secrets_file: str = "secrets_my.json") -> None:
     """
     我们读取选定group的所有inner key from secrets_my.json, 然后比较每个key的value和系统环境变量的value。
@@ -28,12 +29,20 @@ def to_env(secret_group: str, secrets_file: str = "secrets_my.json") -> None:
     我们将"temp_env"中的值写入到 secrets_my.json 文件中 - 新建一个小属性, 名字是 当天的日期, 也就是
     然后再check一次系统的环境变量和secrets_my.json中的值是否相同。
     """
-    inner_keys = load_inner_keys(secret_group, secrets_file) # 读取选定group的所有inner key
-    temp_env = check_env(inner_keys, secret_group) # 比较每个key的value和系统环境变量的value
-    set_environment_variables(temp_env) # overwrite系统环境变量的值
+    inner_keys = load_inner_keys(
+        secret_group, secrets_file
+    )  # 读取选定group的所有inner key
+    temp_env = check_env(
+        inner_keys, secret_group
+    )  # 比较每个key的value和系统环境变量的value
+    set_environment_variables(temp_env)  # overwrite系统环境变量的值
     keys = datetime.now().strftime("%Y-%m-%d")
-    write_inner_keys_to_my(secret_group, keys, temp_env, secrets_file) # 将"temp_env"中的值写入到 secrets_my.json 文件中
-    check_env(inner_keys, secret_group) # 再check一次系统的环境变量和secrets_my.json中的值是否相同
+    write_inner_keys_to_my(
+        secret_group, keys, temp_env, secrets_file
+    )  # 将"temp_env"中的值写入到 secrets_my.json 文件中
+    check_env(
+        inner_keys, secret_group
+    )  # 再check一次系统的环境变量和secrets_my.json中的值是否相同
     return None
 
 
@@ -43,7 +52,8 @@ def get_environment_variables(group_secrets=None):
         return {key: os.environ.get(key) for key in group_secrets}
     else:
         return dict(os.environ)
-    
+
+
 def set_environment_variables(keys: dict):
     """设置环境变量。"""
     for key, value in keys.items():
@@ -51,8 +61,9 @@ def set_environment_variables(keys: dict):
         # 直接修改系统的环境变量
         os.system(f'echo "export {key}={value}" >> /etc/environment')
 
+
 def check_env(inner_keys: dict, group_secrets: str) -> dict:
-    """ 对比. 将不一样的key-value存储到一个字典中."""
+    """对比. 将不一样的key-value存储到一个字典中."""
     my_var = inner_keys
     env_var = get_environment_variables(group_secrets)
     temp_env = {}
@@ -69,14 +80,25 @@ def check_env(inner_keys: dict, group_secrets: str) -> dict:
             temp_env[key] = json_value
     return temp_env
 
-def write_inner_keys_to_my(group_secrets: str, keys: str, temp_env: dict, secrets_file: str = "secrets_my.json") -> None:
+
+def write_inner_keys_to_my(
+    group_secrets: str, keys: str, temp_env: dict, secrets_file: str = "secrets_my.json"
+) -> None:
     for key, value in temp_env.items():
         write_inner_key_to_my(group_secrets, keys, key, value, secrets_file)
     return None
 
+
 import json
 
-def write_inner_key_to_my(group_secrets: str, keys: str, key: str, value: str, secrets_file: str = "secrets_my.json") -> None:
+
+def write_inner_key_to_my(
+    group_secrets: str,
+    keys: str,
+    key: str,
+    value: str,
+    secrets_file: str = "secrets_my.json",
+) -> None:
     """将key-value写入到secrets_my.json文件中, 如果没有 "keys" 它会自己创建.
 
     Args:
@@ -109,8 +131,8 @@ def write_inner_key_to_my(group_secrets: str, keys: str, key: str, value: str, s
     return None
 
 
-
 ####################
+
 
 def load_json_file(file_path: str) -> Dict[str, Any]:
     """Loads and returns the content of a JSON file."""
@@ -121,8 +143,11 @@ def load_json_file(file_path: str) -> Dict[str, Any]:
         raise FileNotFoundError(f"File not found: {file_path}")
     except json.JSONDecodeError:
         raise ValueError(f"Invalid JSON format in file: {file_path}")
-    
-def load_inner_keys(group: str, secrets_file: str = "secrets_my.json") -> Dict[str, str]:
+
+
+def load_inner_keys(
+    group: str, secrets_file: str = "secrets_my.json"
+) -> Dict[str, str]:
     """Loads the inner keys of a specific group from the secrets file."""
     try:
         with open(secrets_file, "r") as f:
