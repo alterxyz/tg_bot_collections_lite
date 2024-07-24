@@ -5,6 +5,7 @@ import importlib
 import re
 import traceback
 from functools import update_wrapper
+from mimetypes import guess_type
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 
@@ -26,7 +27,7 @@ DEFAULT_LOAD_PRIORITY = 10
 
 BOT_MESSAGE_LENGTH = 4000
 
-REPLY_MESSAGE_CACHE = ExpiringDict(max_len=1000, max_age_seconds=300)
+REPLY_MESSAGE_CACHE = ExpiringDict(max_len=1000, max_age_seconds=600)
 
 
 def bot_reply_first(message: Message, who: str, bot: TeleBot) -> Message:
@@ -112,6 +113,29 @@ def extract_prompt(message: str, bot_name: str) -> str:
         # the replacement happens in the right part, restore it.
         message = message.replace(": ", ":", 1)
     return message.strip()
+
+
+def remove_prompt_prefix(message: str) -> str:
+    """
+    Remove "/cmd" or "/cmd@bot_name" or "cmd:"
+    """
+    message += " "
+    # Explanation of the regex pattern:
+    # ^                        - Match the start of the string
+    # (                        - Start of the group
+    #   /                      - Literal forward slash
+    #   [a-zA-Z]               - Any letter (start of the command)
+    #   [a-zA-Z0-9_]*          - Any number of letters, digits, or underscores
+    #   (@\w+)?                - Optionally match @ followed by one or more word characters (for bot name)
+    #   \s                     - A single whitespace character (space or newline)
+    # |                        - OR
+    #   [a-zA-Z]               - Any letter (start of the command)
+    #   [a-zA-Z0-9_]*          - Any number of letters, digits, or underscores
+    #   :\s                    - Colon followed by a single whitespace character
+    # )                        - End of the group
+    pattern = r"^(/[a-zA-Z][a-zA-Z0-9_]*(@\w+)?\s|[a-zA-Z][a-zA-Z0-9_]*:\s)"
+
+    return re.sub(pattern, "", message).strip()
 
 
 def wrap_handler(handler: T, bot: TeleBot) -> T:
@@ -219,9 +243,10 @@ def enrich_text_with_urls(text: str) -> str:
 
 
 def image_to_data_uri(file_path):
+    content_type = guess_type(file_path)[0]
     with open(file_path, "rb") as image_file:
         encoded_image = base64.b64encode(image_file.read()).decode("utf-8")
-        return f"data:image/png;base64,{encoded_image}"
+        return f"data:{content_type};base64,{encoded_image}"
 
 
 import json
@@ -363,7 +388,7 @@ class TelegraphAPI:
         url = f"{self.base_url}/getPage/{path}?return_content=true"
         response = requests.get(url)
         response.raise_for_status()
-        return response.json()["result"]
+        return response.json()["result"]["content"]
 
     def create_page_md(
         self,
@@ -452,11 +477,31 @@ class TelegraphAPI:
 
         return new_dom
 
+    def upload_image(self, file_name: str) -> str:
+        base_url = "https://telegra.ph"
+        upload_url = f"{base_url}/upload"
+
+        try:
+            content_type = guess_type(file_name)[0]
+            with open(file_name, "rb") as f:
+                response = requests.post(
+                    upload_url, files={"file": ("blob", f, content_type)}
+                )
+                response.raise_for_status()
+                # [{'src': '/file/xx.jpg'}]
+                response = response.json()
+                image_url = f"{base_url}{response[0]['src']}"
+                return image_url
+        except Exception as e:
+            print(f"upload image: {e}")
+            return "https://telegra.ph/api"
+
 
 # `import *` will give you these
 __all__ = [
     "bot_reply_first",
     "bot_reply_markdown",
+    "remove_prompt_prefix",
     "enrich_text_with_urls",
     "image_to_data_uri",
     "TelegraphAPI",

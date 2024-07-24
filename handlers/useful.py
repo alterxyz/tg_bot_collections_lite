@@ -6,7 +6,8 @@ from expiringdict import ExpiringDict
 from os import environ
 import time
 import datetime
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 import re
 
 from . import *
@@ -31,26 +32,29 @@ ph = TelegraphAPI(TELEGRA_PH_TOKEN)
 #####################################################################
 #### Customization ##################################################
 Language = "zh-cn"  # "en" or "zh-cn".
-SUMMARY = "gemini"  # "cohere" or "gemini" or None
+SUMMARY = None  # "cohere" or "gemini" or None
 General_clean = True  # Will Delete LLM message
 Extra_clean = True  # Will Delete command message too
-Link_Clean = True  # True will disable Instant View / Web Preview
+Link_Clean = False  # True will disable Instant View / Web Preview
 Stream_Thread = 2  # How many stream LLM will stream at the same time
 Complete_Thread = 3  # How many non-stream LLM will run at the same time
-Stream_Timeout = 45  # If not complete in 45s, will stop wait or raise Exception timeout
+Stream_Timeout = (
+    240  # If not complete in 4 mins, will stop wait or raise Exception timeout
+)
 MESSAGE_MAX_LENGTH = 4096  # Message after url enrich may too long
 Hint = (
-    "\n(Need answer? Type or tap /answer_it )"
+    "\n(Need answer? Type or tap /answer_it after a message)"
     if Language == "en"
-    else "\n(需要回答? 输入或点击 /answer_it )"
+    else "\n(需要回答? 在一条消息之后, 输入或点击 /answer_it )"
 )
 #### LLMs ####
 GEMINI_USE = True
-CHATGPT_USE = False
-CLADUE_USE = False
-QWEN_USE = True
+
+CHATGPT_USE = True
+CLADUE_USE = True
+QWEN_USE = False
 COHERE_USE = False  # Slow, but web search
-LLAMA_USE = True  # prompted for Language
+LLAMA_USE = False  # prompted for Language
 
 CHATGPT_COMPLETE = False  # sync mode
 CLADUE_COMPLETE = False  # Only display in telegra.ph
@@ -59,7 +63,11 @@ LLAMA_COMPLETE = False
 
 GEMINI_USE_THREAD = False  # Maybe not work
 
-COHERE_APPEND = True  # Update later to ph, for extremely long content
+CHATGPT_APPEND = True  # Update later to ph
+CLADUE_APPEND = True
+COHERE_APPEND = True
+LLAMA_APPEND = True
+QWEN_APPEND = True
 
 #### Customization End ##############################################
 #####################################################################
@@ -68,7 +76,7 @@ COHERE_APPEND = True  # Update later to ph, for extremely long content
 #### OpenAI init ####
 CHATGPT_API_KEY = environ.get("OPENAI_API_KEY")
 CHATGPT_BASE_URL = environ.get("OPENAI_API_BASE") or "https://api.openai.com/v1"
-if (CHATGPT_USE or CHATGPT_COMPLETE) and CHATGPT_API_KEY:
+if (CHATGPT_USE or CHATGPT_COMPLETE or CHATGPT_APPEND) and CHATGPT_API_KEY:
     from openai import OpenAI
 
     CHATGPT_PRO_MODEL = "gpt-4o-2024-05-13"
@@ -99,7 +107,7 @@ if (GEMINI_USE or GEMINI_USE_THREAD) and GOOGLE_GEMINI_KEY:
     ]
 
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-pro-latest",
+        model_name="gemini-1.5-flash-latest",
         generation_config=generation_config,
         safety_settings=safety_settings,
         system_instruction=f"""
@@ -117,6 +125,7 @@ Please adhere to these guidelines when formulating your response:
    - If necessary, offer multiple interpretations or answers to cover possible scenarios.
 7. Aim to make your response as complete and helpful as possible, even with limited context.
 8. You must respond in {Language}.
+9. Limit your response to approximately 500 characters in the target language.
 
 Your response should be natural and fitting for a group chat context. While you only have access to this single message, use your broad knowledge base to provide informative and helpful answers. Be confident in your responses, but if you're making assumptions, briefly acknowledge this fact.
 
@@ -153,7 +162,7 @@ if (COHERE_USE or COHERE_COMPLETE or COHERE_APPEND) and COHERE_API_KEY:
 #### Qwen init ####
 QWEN_API_KEY = environ.get("TOGETHER_API_KEY")
 
-if QWEN_USE and QWEN_API_KEY:
+if (QWEN_USE or QWEN_APPEND) and QWEN_API_KEY:
     from together import Together
 
     QWEN_MODEL = "Qwen/Qwen2-72B-Instruct"
@@ -162,7 +171,7 @@ if QWEN_USE and QWEN_API_KEY:
 #### Claude init ####
 ANTHROPIC_API_KEY = environ.get("ANTHROPIC_API_KEY")
 # use openai for claude
-if (CLADUE_USE or CLADUE_COMPLETE) and ANTHROPIC_API_KEY:
+if (CLADUE_USE or CLADUE_COMPLETE or CLADUE_APPEND) and ANTHROPIC_API_KEY:
     ANTHROPIC_BASE_URL = environ.get("ANTHROPIC_BASE_URL")
     ANTHROPIC_MODEL = "claude-3-5-sonnet-20240620"
     claude_client = OpenAI(
@@ -171,7 +180,7 @@ if (CLADUE_USE or CLADUE_COMPLETE) and ANTHROPIC_API_KEY:
 
 #### llama init ####
 LLAMA_API_KEY = environ.get("GROQ_API_KEY")
-if (LLAMA_USE or LLAMA_COMPLETE) and LLAMA_API_KEY:
+if (LLAMA_USE or LLAMA_COMPLETE or LLAMA_APPEND) and LLAMA_API_KEY:
     from groq import Groq
 
     llama_client = Groq(api_key=LLAMA_API_KEY)
@@ -192,8 +201,12 @@ def latest_handle_messages(message: Message, bot: TeleBot):
     """ignore"""
     chat_id = message.chat.id
     chat_user_id = message.from_user.id
+    # if not text, ignore
+    if message.text is None:
+        return
+
     # if is bot command, ignore
-    if message.text and message.text.startswith("/"):
+    if message.text.startswith("/"):
         return
     # start command ignore
     elif message.text.startswith(
@@ -218,9 +231,6 @@ def latest_handle_messages(message: Message, bot: TeleBot):
     # answer_it command ignore
     elif message.text.startswith("answer_it"):
         return
-    # if not text, ignore
-    elif not message.text:
-        return
     else:
         if chat_user_dict.get(chat_user_id):
             message.text += chat_message_dict[chat_id].text
@@ -235,56 +245,99 @@ def answer_it_handler(message: Message, bot: TeleBot) -> None:
     """answer_it: /answer_it"""
     # answer the last message in the chat group
     who = "answer_it"
-    # get the last message in the chat
 
     chat_id = message.chat.id
-    latest_message = chat_message_dict.get(chat_id)
-    m = original_m = latest_message.text.strip()
+    full_answer = ""
+    local_image_path = ""
+    m = ""
+    original_m = ""
+
+    # get the last message in the chat
+    if message.reply_to_message is not None:
+        latest_message = message.reply_to_message
+    else:
+        latest_message = chat_message_dict.get(chat_id)
+
+    if latest_message.photo is not None:
+        max_size_photo = max(latest_message.photo, key=lambda p: p.file_size)
+        image_file = bot.get_file(max_size_photo.file_id).file_path
+        downloaded_file = bot.download_file(image_file)
+        local_image_path = "answer_it_temp.jpg"
+        with open(local_image_path, "wb") as temp_file:
+            temp_file.write(downloaded_file)
+
+        m = original_m = remove_prompt_prefix(latest_message.caption.strip())
+        ph_image_url = ph.upload_image(local_image_path)
+        full_answer += f"\n![Image]({ph_image_url})\n"
+    else:
+        m = original_m = remove_prompt_prefix(latest_message.text.strip())
+
+    if not m:
+        bot.reply_to(message, "The message was retrieved, but the prompt is empty.")
+        return
+
     m = enrich_text_with_urls(m)
-    full_answer = f"Question:\n{m}\n" if len(m) < 300 else ""
+
     if len(m) > MESSAGE_MAX_LENGTH:
         a = (
-            "The message is too long, please shorten it."
+            "The message is too long, please shorten it or try a direct command like `gemini_pro: your question`."
             if Language == "en"
-            else "消息太长，请缩短。"
+            else "消息太长，请缩短或尝试直接指令例如 `gemini_pro: 你的问题` 。"
         )
         bot.reply_to(message, a)
         return
     full_chat_id_list = []
 
+    ##### Telegraph / APPENDS #####
+    ph_executor = ThreadPoolExecutor(max_workers=1)
+    ph_future = ph_executor.submit(final_answer, latest_message, bot, full_answer)
+
     #### Answers Thread ####
     executor = ThreadPoolExecutor(max_workers=Stream_Thread)
     if GEMINI_USE_THREAD and GOOGLE_GEMINI_KEY:
-        gemini_future = executor.submit(gemini_answer, latest_message, bot, m)
+        gemini_future = executor.submit(
+            gemini_answer, latest_message, bot, m, local_image_path
+        )
     if CHATGPT_USE and CHATGPT_API_KEY:
-        chatgpt_future = executor.submit(chatgpt_answer, latest_message, bot, m)
-    if COHERE_USE and COHERE_API_KEY:
+        chatgpt_future = executor.submit(
+            chatgpt_answer, latest_message, bot, m, local_image_path
+        )
+    if COHERE_USE and COHERE_API_KEY and not local_image_path:
         cohere_future = executor.submit(cohere_answer, latest_message, bot, m)
-    if QWEN_USE and QWEN_API_KEY:
+    if QWEN_USE and QWEN_API_KEY and not local_image_path:
         qwen_future = executor.submit(qwen_answer, latest_message, bot, m)
     if CLADUE_USE and ANTHROPIC_API_KEY:
-        claude_future = executor.submit(claude_answer, latest_message, bot, m)
-    if LLAMA_USE and LLAMA_API_KEY:
+        claude_future = executor.submit(
+            claude_answer, latest_message, bot, m, local_image_path
+        )
+    if LLAMA_USE and LLAMA_API_KEY and not local_image_path:
         llama_future = executor.submit(llama_answer, latest_message, bot, m)
 
     #### Complete Message Thread ####
     executor2 = ThreadPoolExecutor(max_workers=Complete_Thread)
-    if CHATGPT_COMPLETE and CHATGPT_API_KEY:
-        complete_chatgpt_future = executor2.submit(complete_chatgpt, m)
-    if CLADUE_COMPLETE and ANTHROPIC_API_KEY:
-        complete_claude_future = executor2.submit(complete_claude, m)
-    if LLAMA_COMPLETE and LLAMA_API_KEY:
+    if not CHATGPT_USE and CHATGPT_COMPLETE and CHATGPT_API_KEY:
+        complete_chatgpt_future = executor2.submit(
+            complete_chatgpt, m, local_image_path
+        )
+    if not CLADUE_USE and CLADUE_COMPLETE and ANTHROPIC_API_KEY:
+        complete_claude_future = executor2.submit(complete_claude, m, local_image_path)
+    if not LLAMA_USE and LLAMA_COMPLETE and LLAMA_API_KEY and not local_image_path:
         complete_llama_future = executor2.submit(complete_llama, m)
-    if COHERE_COMPLETE and COHERE_API_KEY:
+    if not COHERE_USE and COHERE_COMPLETE and COHERE_API_KEY and not local_image_path:
         complete_cohere_future = executor2.submit(complete_cohere, m)
 
     #### Gemini Answer Individual ####
     if GEMINI_USE and GOOGLE_GEMINI_KEY:
-        g_who = "Gemini Pro"
+        g_who = "Gemini"
         g_s = ""
         g_reply_id = bot_reply_first(latest_message, g_who, bot)
         try:
-            g_r = convo.send_message(m, stream=True)
+            if local_image_path:
+                gemini_image_file = genai.upload_file(path=local_image_path)
+                g_r = convo.send_message([m, gemini_image_file], stream=True)
+            else:
+                g_r = convo.send_message(m, stream=True)
+
             g_start = time.time()
             g_overall_start = time.time()
             for e in g_r:
@@ -328,11 +381,11 @@ def answer_it_handler(message: Message, bot: TeleBot) -> None:
         anaswer_chatgpt, chatgpt_chat_id = chatgpt_future.result()
         full_chat_id_list.append(chatgpt_chat_id)
         full_answer += anaswer_chatgpt
-    if COHERE_USE and COHERE_API_KEY:
+    if COHERE_USE and COHERE_API_KEY and not local_image_path:
         answer_cohere, cohere_chat_id = cohere_future.result()
         full_chat_id_list.append(cohere_chat_id)
         full_answer += answer_cohere
-    if QWEN_USE and QWEN_API_KEY:
+    if QWEN_USE and QWEN_API_KEY and not local_image_path:
         answer_qwen, qwen_chat_id = qwen_future.result()
         full_chat_id_list.append(qwen_chat_id)
         full_answer += answer_qwen
@@ -340,31 +393,38 @@ def answer_it_handler(message: Message, bot: TeleBot) -> None:
         answer_claude, claude_chat_id = claude_future.result()
         full_chat_id_list.append(claude_chat_id)
         full_answer += answer_claude
-    if LLAMA_USE and LLAMA_API_KEY:
+    if LLAMA_USE and LLAMA_API_KEY and not local_image_path:
         answer_llama, llama_chat_id = llama_future.result()
         full_chat_id_list.append(llama_chat_id)
         full_answer += answer_llama
 
     #### Complete Messages ####
-    if CHATGPT_COMPLETE and CHATGPT_API_KEY:
+    if not CHATGPT_USE and CHATGPT_COMPLETE and CHATGPT_API_KEY:
         full_answer += complete_chatgpt_future.result()
-    if CLADUE_COMPLETE and ANTHROPIC_API_KEY:
+    if not CLADUE_USE and CLADUE_COMPLETE and ANTHROPIC_API_KEY:
         full_answer += complete_claude_future.result()
-    if COHERE_COMPLETE and COHERE_API_KEY:
+    if not COHERE_USE and COHERE_COMPLETE and COHERE_API_KEY and not local_image_path:
         full_answer += complete_cohere_future.result()
-    if LLAMA_COMPLETE and LLAMA_API_KEY:
+    if not LLAMA_USE and LLAMA_COMPLETE and LLAMA_API_KEY and not local_image_path:
         full_answer += complete_llama_future.result()
 
     print(full_chat_id_list)
 
-    if len(m) > 300:
+    if len(m) < 300:
+        full_answer = f"{llm_answer('Question', original_m)}{full_answer}"
+    else:
         full_answer = f"{llm_answer('Question', original_m)}{full_answer}{llm_answer('Question', m)}"
 
-    ##### Telegraph #####
-    if full_chat_id_list == []:
-        bot.reply_to(message, "No Any Answer, Please check log.")
-    else:
-        final_answer(latest_message, bot, full_answer, full_chat_id_list)
+    # Append the answer to the telegra.ph page at the front
+    ph_s, ph_answers = ph_future.result()
+    full_answer = f"{full_answer}\n{ph_answers}"
+    ph_s = re.search(r"https?://telegra\.ph/(.+)", ph_s).group(1)
+    ph.edit_page_md(path=ph_s, title="Answer it", markdown_text=full_answer)
+
+    # delete the chat message, only leave a telegra.ph link
+    if General_clean:
+        for i in full_chat_id_list:
+            bot.delete_message(chat_id, i)
 
     if Extra_clean:  # delete the command message
         bot.delete_message(chat_id, message.message_id)
@@ -391,14 +451,18 @@ def llm_background_ph_update(path: str, full_answer: str, m: str) -> str:
     return full_answer
 
 
-def gemini_answer(latest_message: Message, bot: TeleBot, m):
+def gemini_answer(latest_message: Message, bot: TeleBot, m, local_image_path):
     """gemini answer"""
     who = "Gemini Pro"
     # show something, make it more responsible
     reply_id = bot_reply_first(latest_message, who, bot)
 
     try:
-        r = convo.send_message(m, stream=True)
+        if local_image_path:
+            gemini_image_file = genai.upload_file(path=local_image_path)
+            r = convo.send_message([m, gemini_image_file], stream=True)
+        else:
+            r = convo.send_message(m, stream=True)
         s = ""
         start = time.time()
         overall_start = time.time()
@@ -432,12 +496,25 @@ def gemini_answer(latest_message: Message, bot: TeleBot, m):
     return llm_answer(who, s), reply_id.message_id
 
 
-def chatgpt_answer(latest_message: Message, bot: TeleBot, m):
+def chatgpt_answer(latest_message: Message, bot: TeleBot, m, local_image_path):
     """chatgpt answer"""
     who = "ChatGPT Pro"
     reply_id = bot_reply_first(latest_message, who, bot)
 
     player_message = [{"role": "user", "content": m}]
+    if local_image_path:
+        player_message = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": m},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_to_data_uri(local_image_path)},
+                    },
+                ],
+            }
+        ]
 
     try:
         r = client.chat.completions.create(
@@ -467,20 +544,34 @@ def chatgpt_answer(latest_message: Message, bot: TeleBot, m):
 
     except Exception as e:
         print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
-        bot_reply_markdown(reply_id, who, "answer wrong", bot)
         return f"\n---\n{who}:\nAnswer wrong", reply_id.message_id
 
     return llm_answer(who, s), reply_id.message_id
 
 
-def claude_answer(latest_message: Message, bot: TeleBot, m):
+def claude_answer(latest_message: Message, bot: TeleBot, m, local_image_path):
     """claude answer"""
     who = "Claude Pro"
     reply_id = bot_reply_first(latest_message, who, bot)
 
+    player_message = [{"role": "user", "content": m}]
+    if local_image_path:
+        player_message = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": m},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_to_data_uri(local_image_path)},
+                    },
+                ],
+            }
+        ]
+
     try:
         r = claude_client.chat.completions.create(
-            messages=[{"role": "user", "content": m}],
+            messages=player_message,
             max_tokens=4096,
             model=ANTHROPIC_MODEL,
             stream=True,
@@ -506,7 +597,6 @@ def claude_answer(latest_message: Message, bot: TeleBot, m):
 
     except Exception as e:
         print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
-        bot_reply_markdown(reply_id, who, "answer wrong", bot)
         return f"\n---\n{who}:\nAnswer wrong", reply_id.message_id
 
     answer = f"\n---\n{who}:\n{s}"
@@ -581,7 +671,6 @@ def cohere_answer(latest_message: Message, bot: TeleBot, m):
             pass
     except Exception as e:
         print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
-        bot_reply_markdown(reply_id, who, "Answer wrong", bot)
         return f"\n---\n{who}:\nAnswer wrong", reply_id.message_id
 
     return llm_answer(who, content), reply_id.message_id
@@ -625,7 +714,6 @@ def qwen_answer(latest_message: Message, bot: TeleBot, m):
 
     except Exception as e:
         print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
-        bot_reply_markdown(reply_id, who, "answer wrong", bot)
         return f"\n---\n{who}:\nAnswer wrong", reply_id.message_id
 
     return llm_answer(who, s), reply_id.message_id
@@ -668,7 +756,6 @@ def llama_answer(latest_message: Message, bot: TeleBot, m):
 
     except Exception as e:
         print(f"\n------\n{who} function inner Error:\n{e}\n------\n")
-        bot_reply_markdown(reply_id, who, "answer wrong", bot)
         return f"\n---\n{who}:\nAnswer wrong", reply_id.message_id
 
     return llm_answer(who, s), reply_id.message_id
@@ -677,7 +764,7 @@ def llama_answer(latest_message: Message, bot: TeleBot, m):
 # TODO: Perplexity looks good. `pplx_answer`
 
 
-def final_answer(latest_message: Message, bot: TeleBot, full_answer: str, answers_list):
+def final_answer(latest_message: Message, bot: TeleBot, full_answer: str):
     """final answer"""
     who = "Answer it"
     reply_id = bot_reply_first(latest_message, who, bot)
@@ -687,30 +774,89 @@ def final_answer(latest_message: Message, bot: TeleBot, full_answer: str, answer
 
     # greate new telegra.ph page
     ph_s = ph.create_page_md(title="Answer it", markdown_text=full_answer)
-    bot_reply_markdown(
-        reply_id,
-        who,
-        f"**[{('🔗Full Answer' if Language == 'en' else '🔗全文')}]({ph_s})**{Hint}",
-        bot,
-    )
-    # delete the chat message, only leave a telegra.ph link
-    if General_clean:
-        for i in answers_list:
-            bot.delete_message(latest_message.chat.id, i)
-
-    #### Summary ####
-    if SUMMARY == None:
-        pass
-    else:
-        s = llm_summary(bot, full_answer, ph_s, reply_id)
-        bot_reply_markdown(reply_id, who, s, bot, disable_web_page_preview=True)
+    m = f"**[{('🔗Full Answer' if Language == 'en' else '🔗全文')}]({ph_s})**{Hint}"
+    bot_reply_markdown(reply_id, who, m, bot)
 
     #### Background LLM ####
     # Run background llm, no show to telegram, just append the ph page, Good for slow llm
+    # Make a thread to run the background llm.
+    # But `append_xxx` with threadpool may cause ph update skip.
+    answer_lock = Lock()
 
-    if COHERE_APPEND and COHERE_API_KEY:
-        cohere_a = complete_cohere(latest_message.text)
-        full_answer = llm_background_ph_update(ph_s, full_answer, cohere_a)
+    def append_answers(result, llm_name):
+        nonlocal full_answer, m
+        with answer_lock:
+            full_answer = llm_background_ph_update(ph_s, full_answer, result)
+
+    with ThreadPoolExecutor(max_workers=Complete_Thread) as executor:
+        futures = []
+
+        api_calls = [
+            (CHATGPT_APPEND, CHATGPT_API_KEY, complete_chatgpt, "ChatGPT"),
+            (CLADUE_APPEND, ANTHROPIC_API_KEY, complete_claude, "Claude"),
+            (COHERE_APPEND, COHERE_API_KEY, complete_cohere, "Cohere"),
+            (LLAMA_APPEND, LLAMA_API_KEY, complete_llama, "LLaMA"),
+            (QWEN_APPEND, QWEN_API_KEY, complete_qwen, "Qwen"),
+        ]
+
+        for condition, api_key, func, name in api_calls:
+            if condition and api_key:
+                futures.append(executor.submit(func, latest_message.text))
+
+        for future in as_completed(futures):
+            try:
+                result = future.result(timeout=Stream_Timeout)
+                api_name = api_calls[futures.index(future)][3]
+                append_answers(result, api_name)
+            except Exception as e:
+                print(f"An API call failed: {e}")
+
+    m += "✔️"
+    bot_reply_markdown(reply_id, who, m, bot)
+
+    if SUMMARY is not None:
+        s = llm_summary(bot, full_answer, ph_s, reply_id)
+        bot_reply_markdown(reply_id, who, s, bot, disable_web_page_preview=True)
+
+    return ph_s, full_answer
+
+
+def append_message_to_ph_front(m: str, path: str) -> bool:
+    """We append the message to the ph page."""
+    ph_path = re.search(r"https?://telegra\.ph/(.+)", path).group(1)
+    try:
+        content = ph._md_to_dom(m)  # convert to ph dom
+        latest_ph = ph.get_page(
+            ph_path
+        )  # after chatgpt done, we read the latest telegraph
+        if "content" in latest_ph and isinstance(latest_ph["content"], list):
+            new_content = content + latest_ph["content"]
+        else:
+            new_content = content
+        time.sleep(1)
+        ph.edit_page(ph_path, title="Answer it", content=new_content)
+        return True
+    except Exception as e:
+        print(f"\n---\nappend_message_to_ph_front Error:\n{e}\n---\n")
+        return False
+
+
+def append_chatgpt(m: str, ph_path: str) -> bool:
+    """we run chatgpt by complete_chatgpt and we append it to the ph page. Return True if success, False if fail like timeout."""
+    try:
+        chatgpt_a = complete_chatgpt(m)  # call chatgpt
+        print(f"\n---\nchatgpt_a:\n{chatgpt_a}\n---\n")
+        content = ph._md_to_dom(chatgpt_a)  # convert to ph dom
+        latest_ph = ph.get_page(
+            ph_path
+        )  # after chatgpt done, we read the latest telegraph
+        new_content = latest_ph + content  # merge the content
+        ph.edit_page(
+            ph_path, title="Answer it", content=new_content
+        )  # update the telegraph TODO: update too fast may cause skip
+        return True
+    except:
+        return False
 
 
 def llm_summary(bot, full_answer, ph_s, reply_id) -> str:
@@ -725,12 +871,26 @@ def llm_summary(bot, full_answer, ph_s, reply_id) -> str:
     return s
 
 
-def complete_chatgpt(m: str) -> str:
+def complete_chatgpt(m: str, local_image_path: str) -> str:
     """we run chatgpt get the full answer"""
     who = "ChatGPT Pro"
+    player_message = [{"role": "user", "content": m}]
+    if local_image_path:
+        player_message = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": m},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_to_data_uri(local_image_path)},
+                    },
+                ],
+            }
+        ]
     try:
         r = client.chat.completions.create(
-            messages=[{"role": "user", "content": m}],
+            messages=player_message,
             max_tokens=4096,
             model=CHATGPT_PRO_MODEL,
         )
@@ -742,12 +902,27 @@ def complete_chatgpt(m: str) -> str:
     return content
 
 
-def complete_claude(m: str) -> str:
+def complete_claude(m: str, local_image_path: str) -> str:
     """we run claude get the full answer"""
     who = "Claude Pro"
+
+    player_message = [{"role": "user", "content": m}]
+    if local_image_path:
+        player_message = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": m},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": image_to_data_uri(local_image_path)},
+                    },
+                ],
+            }
+        ]
     try:
         r = claude_client.chat.completions.create(
-            messages=[{"role": "user", "content": m}],
+            messages=player_message,
             max_tokens=4096,
             model=ANTHROPIC_MODEL,
         )
@@ -822,6 +997,36 @@ def complete_llama(m: str) -> str:
 
     except Exception as e:
         print(f"\n------\ncomplete_llama Error:\n{e}\n------\n")
+        s = "Non Stream Answer wrong"
+    return llm_answer(who, s)
+
+
+def complete_qwen(m: str) -> str:
+    """we run qwen get the full answer"""
+    who = "qwen Pro"
+    try:
+        overall_start = time.time()
+        r = qwen_client.chat.completions.create(
+            messages=[
+                {
+                    "content": f"You are an AI assistant added to a group chat to provide help or answer questions. You only have access to the most recent message in the chat, which will be the next message you receive after this system prompt. Your task is to provide a helpful and relevant response based on this information.\n\nPlease adhere to these guidelines when formulating your response:\n\n1. Address the content of the message directly and proactively.\n2. If the message is a question or request, provide a comprehensive answer or assistance to the best of your ability.\n3. Use your general knowledge and capabilities to fill in gaps where context might be missing.\n4. Keep your response concise yet informative, appropriate for a group chat setting.\n5. Maintain a friendly, helpful, and confident tone throughout.\n6. If the message is unclear:\n   - Make reasonable assumptions to provide a useful response.\n   - If necessary, offer multiple interpretations or answers to cover possible scenarios.\n7. Aim to make your response as complete and helpful as possible, even with limited context.\n8. You must respond in {Language}.\n\nYour response should be natural and fitting for a group chat context. While you only have access to this single message, use your broad knowledge base to provide informative and helpful answers. Be confident in your responses, but if you're making assumptions, briefly acknowledge this fact.\n\nRemember, the group administrator has approved your participation and will review responses as needed, so focus on being as helpful as possible rather than being overly cautious.",
+                    "role": "system",
+                },
+                {"role": "user", "content": m},
+            ],
+            max_tokens=8192,
+            model=QWEN_MODEL,
+            stream=True,
+        )
+        s = ""
+        for chunk in r:
+            if chunk.choices[0].delta.content is None:
+                break
+            s += chunk.choices[0].delta.content
+            if time.time() - overall_start > Stream_Timeout:  # Timeout
+                raise Exception("Qwen complete Running Timeout")
+    except Exception as e:
+        print(f"\n------\ncomplete_qwen Error:\n{e}\n------\n")
         s = "Non Stream Answer wrong"
     return llm_answer(who, s)
 
